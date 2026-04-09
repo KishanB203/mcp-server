@@ -270,6 +270,23 @@ export const TOOLS = [
     },
   },
   {
+    name: "agent_generate_solution_requirements",
+    description:
+      "SolutionRequirementsAgent: Converts Figma/screen input + raw client requirements into " +
+      "implementation-ready docs: context.md, modular frontend/*.md UI specs, and backend/*.md " +
+      "(API surface, data model, services/integrations, security/auth).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        featureName: { type: "string", description: "Feature or screen name" },
+        figmaInput: { type: "string", description: "Figma link or screen description" },
+        businessRequirements: { type: "string", description: "Raw client requirements text" },
+        outputDir: { type: "string", description: "Output directory (default: current working directory)" },
+      },
+      required: ["featureName", "businessRequirements"],
+    },
+  },
+  {
     name: "agent_full_workflow",
     description:
       "Runs the COMPLETE automated pipeline in one call: " +

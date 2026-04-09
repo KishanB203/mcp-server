@@ -44,6 +44,11 @@ Requirement → PBI Analysis → Design → Architecture → Code → PR → Rev
 - Mark ADO task as "Done"
 - Add merge comment to ADO task
 
+### SolutionRequirementsAgent (`src/agents/solution-requirements-agent.js`)
+- Convert Figma/screen input + raw client requirements into implementation-ready docs
+- Generate context.md, modular frontend/*.md UI specs, and backend/*.md (API surface, data model, services/integrations, security/auth)
+- Create structured documentation for full-stack features
+
 ## MCP Tools (use via Claude Code)
 
 Call `agent_full_workflow(taskId)` to run the complete pipeline.
@@ -52,10 +57,11 @@ Or call agents individually:
 1. `agent_analyze_task(taskId)`
 2. `figma_generate_wireframe(taskId)`
 3. `agent_generate_architecture(featureName)`
-4. `agent_start_development(taskId)`
-5. `agent_create_pr(taskId, branchName)`
-6. `agent_review_pr(prNumber, branchName)`
-7. `agent_merge_pr(prNumber)`
+4. `agent_generate_solution_requirements(featureName, businessRequirements)`
+5. `agent_start_development(taskId)`
+6. `agent_create_pr(taskId, branchName)`
+7. `agent_review_pr(prNumber, branchName)`
+8. `agent_merge_pr(prNumber)`
 
 ## Branch Convention
 `feature/{task-id}-{kebab-case-title}`

@@ -233,7 +233,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         );
       }
 
-      case "agent_generate_fullstack_requirements": {
+      case "agent_generate_solution_requirements": {
         const r = solutionRequirementsAgent.generateDocs({
           featureName: args.featureName,
           figmaInput: args.figmaInput,
