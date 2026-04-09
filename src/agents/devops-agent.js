@@ -1,7 +1,7 @@
 import { execSync } from "child_process";
-import { updateWorkItemState, addWorkItemComment } from "../tools/update-ticket.js";
-import { extractTaskIdFromBranch } from "../branch-naming.js";
-import { createGitHubClient } from "../github-client.js";
+import { updateWorkItemState, addWorkItemComment } from "../tools/ado/update-work-item.js";
+import { extractTaskIdFromBranch } from "../tools/branch/branch-naming.js";
+import { createGitHubClient } from "../infrastructure/github/github-client.js";
 
 /**
  * DevOps Agent

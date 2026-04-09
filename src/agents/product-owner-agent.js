@@ -1,5 +1,5 @@
-import { getWorkItem } from "../tools/get-ticket.js";
-import { updateWorkItemState, addWorkItemComment } from "../tools/update-ticket.js";
+import { getWorkItem } from "../tools/ado/get-work-item.js";
+import { updateWorkItemState, addWorkItemComment } from "../tools/ado/update-work-item.js";
 
 /**
  * Product Owner Agent

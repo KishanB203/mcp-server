@@ -2,13 +2,13 @@ import { jest } from "@jest/globals";
 
 const postMock = jest.fn();
 
-jest.unstable_mockModule("../ado-client.js", () => ({
+jest.unstable_mockModule("../../infrastructure/ado/ado-client.js", () => ({
   adoClient: {
     post: postMock,
   },
 }));
 
-const { createWorkItem } = await import("./create-ticket.js");
+const { createWorkItem } = await import("./create-work-item.js");
 
 describe("createWorkItem", () => {
   beforeEach(() => {

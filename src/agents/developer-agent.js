@@ -1,10 +1,8 @@
 import { execSync } from "child_process";
-import { generateBranchName, validateBranchName } from "../branch-naming.js";
-import { preflightCheck } from "../conflict-prevention.js";
-import { buildPR } from "../pr-template.js";
-import { updateWorkItemState, addWorkItemComment } from "../tools/update-ticket.js";
-import fs from "fs";
-import path from "path";
+import { generateBranchName, validateBranchName } from "../tools/branch/branch-naming.js";
+import { preflightCheck } from "../tools/branch/conflict-prevention.js";
+import { buildPR } from "../services/pr-template.js";
+import { updateWorkItemState, addWorkItemComment } from "../tools/ado/update-work-item.js";
 
 /**
  * Developer Agent
