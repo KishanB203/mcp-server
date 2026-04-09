@@ -55,6 +55,7 @@ import architectAgent from "./agents/architect-agent.js";
 import developerAgent from "./agents/developer-agent.js";
 import reviewerAgent from "./agents/reviewer-agent.js";
 import devopsAgent from "./agents/devops-agent.js";
+import solutionRequirementsAgent from "./agents/solution-requirements-agent.js";
 
 // Services
 import { runWorkflow } from "./services/workflow.js";
@@ -229,6 +230,32 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           `# DevOpsAgent — ${r.success ? "✅ Merged" : "❌ Failed"}\n\n` +
           r.log.join("\n") +
           (r.error ? `\n\n❌ ${r.error}` : "")
+        );
+      }
+
+      case "agent_generate_fullstack_requirements": {
+        const r = solutionRequirementsAgent.generateDocs({
+          featureName: args.featureName,
+          figmaInput: args.figmaInput,
+          businessRequirements: args.businessRequirements,
+          outputDir: args.outputDir,
+        });
+        const frontendFiles = r.files.filter((f) => f.role === "frontend");
+        const backendFiles = r.files.filter((f) => f.role === "backend");
+        return text(
+          `# SolutionRequirementsAgent — ✅ Documentation Generated\n\n` +
+          `**Feature:** ${r.featureName}\n` +
+          `**Output directory:** ${r.outputDir}\n` +
+          `**Context:** \`${r.contextFile}\`\n` +
+          `**Frontend folder:** \`${r.frontendDir}\` (${frontendFiles.length} module file(s))\n` +
+          `**Backend folder:** \`${r.backendDir}\` (${backendFiles.length} file(s))\n\n` +
+          `## Frontend modules\n` +
+          (frontendFiles.length
+            ? frontendFiles.map((f) => `- ${f.name}: \`${f.path}\``).join("\n")
+            : "(none)") +
+          `\n\n## Backend specs\n` +
+          backendFiles.map((f) => `- \`${f.name}\`: \`${f.path}\``).join("\n") +
+          `\n\n${r.note}`
         );
       }
 
