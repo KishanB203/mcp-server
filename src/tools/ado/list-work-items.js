@@ -1,19 +1,47 @@
-import { adoClient } from "../ado-client.js";
+/**
+ * @module tools/ado/list-work-items
+ *
+ * Lists Azure DevOps work items using a WIQL query.
+ * Supports optional filters for sprint, state, work-item type, and assignee.
+ * Results are batch-fetched in a single ADO API call after the WIQL query.
+ */
+
+import { adoClient } from "../../infrastructure/ado-client.js";
 
 /**
- * Lists work items from a sprint or by state/type using WIQL query
- * Supports filtering by: sprint, state, type, assignedTo
+ * Lists work items from the configured ADO project.
+ *
+ * @param {object} [filters]
+ * @param {string} [filters.sprint]     Iteration path to restrict the query (e.g. "MyProject\\Sprint 1")
+ * @param {string} [filters.state]      Work item state (e.g. "In Progress", "To Do")
+ * @param {string} [filters.type]       Work item type (e.g. "Task", "Bug", "User Story")
+ * @param {string} [filters.assignedTo] Assignee display name or email
+ * @param {number} [filters.limit=1]   Maximum number of results returned
+ * @returns {Promise<WorkItemSummary[]>}
+ *
+ * @typedef {object} WorkItemSummary
+ * @property {number}       id
+ * @property {string}       type
+ * @property {string}       title
+ * @property {string}       state
+ * @property {string}       assignedTo
+ * @property {number|string} priority
+ * @property {number|string} storyPoints
+ * @property {string}       iterationPath
+ * @property {string}       tags
  */
-export async function listWorkItems({ sprint, state, type, assignedTo, limit = 20 } = {}) {
-  // Build WIQL (Work Item Query Language) query
-  const conditions = [
-    `[System.TeamProject] = @project`,
-  ];
+export async function listWorkItems({
+  sprint,
+  state,
+  type,
+  assignedTo,
+  limit = 1,
+} = {}) {
+  const conditions = [`[System.TeamProject] = @project`];
 
   if (type) {
     conditions.push(`[System.WorkItemType] = '${type}'`);
   } else {
-    // Default: Tasks, PBIs, User Stories, Bugs
     conditions.push(
       `[System.WorkItemType] IN ('Task', 'Product Backlog Item', 'User Story', 'Bug', 'Feature')`
     );
@@ -22,7 +50,7 @@ export async function listWorkItems({ sprint, state, type, assignedTo, limit = 2
   if (state) {
     conditions.push(`[System.State] = '${state}'`);
   } else {
-    // Exclude done/removed items by default
+    // Exclude terminal states by default so the list stays actionable.
     conditions.push(`[System.State] NOT IN ('Done', 'Removed', 'Closed')`);
   }
 
@@ -36,8 +64,10 @@ export async function listWorkItems({ sprint, state, type, assignedTo, limit = 2
 
   const wiql = {
     query: `
-      SELECT [System.Id], [System.Title], [System.WorkItemType], [System.State], 
-             [System.AssignedTo], [Microsoft.VSTS.Common.Priority]
+      SELECT
+        [System.Id], [System.Title], [System.WorkItemType],
+        [System.State], [System.AssignedTo],
+        [Microsoft.VSTS.Common.Priority]
       FROM WorkItems
       WHERE ${conditions.join(" AND ")}
       ORDER BY [System.ChangedDate] DESC
@@ -45,13 +75,13 @@ export async function listWorkItems({ sprint, state, type, assignedTo, limit = 2
   };
 
   const queryResponse = await adoClient.post(`/wit/wiql`, wiql, {
-    params: { "$top": limit },
+    params: { $top: limit },
   });
 
   const workItemRefs = queryResponse.data.workItems ?? [];
   if (workItemRefs.length === 0) return [];
 
-  // Batch-fetch full details for the returned IDs
+  // Batch-fetch full field values for all returned IDs in one request.
   const ids = workItemRefs.map((w) => w.id).join(",");
   const detailsResponse = await adoClient.get(`/wit/workitems`, {
     params: {

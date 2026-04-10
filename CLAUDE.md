@@ -38,6 +38,7 @@ Before generating any code, Claude MUST read and follow:
 - `agent_create_pr(taskId, branchName)` — DeveloperAgent: create GitHub PR
 - `agent_review_pr(prNumber, branchName)` — ReviewerAgent: automated code review
 - `agent_merge_pr(prNumber)` — DevOpsAgent: merge PR, close ADO task
+- `agent_generate_solution_requirements(featureName, businessRequirements, ...)` — SolutionRequirementsAgent: convert Figma/screen input + raw client requirements into implementation-ready docs (context.md, frontend/*.md, backend/*.md)
 - `agent_full_workflow(taskId)` — **Run the entire pipeline in one call**
 
 ## Standard Workflow: "Work on Task 123"
