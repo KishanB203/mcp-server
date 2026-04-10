@@ -57,3 +57,35 @@ export async function addWorkItemComment(id, comment) {
     createdDate: response.data.createdDate,
   };
 }
+
+/**
+ * Adds a predecessor dependency relation so `workItemId` depends on
+ * `dependsOnId` (sequence enforcement).
+ *
+ * @param {number|string} workItemId
+ * @param {number|string} dependsOnId
+ * @returns {Promise<{id:number, linkedTo:number|string, relationType:string}>}
+ */
+export async function addWorkItemDependency(workItemId, dependsOnId) {
+  const dependencyUrl = `https://dev.azure.com/${process.env.ADO_ORG}/${process.env.ADO_PROJECT}/_apis/wit/workItems/${dependsOnId}`;
+  const response = await adoClient.patch(
+    `/wit/workitems/${workItemId}`,
+    [
+      {
+        op: "add",
+        path: "/relations/-",
+        value: {
+          rel: "System.LinkTypes.Dependency-Reverse",
+          url: dependencyUrl,
+        },
+      },
+    ],
+    { headers: { "Content-Type": "application/json-patch+json" } }
+  );
+
+  return {
+    id: response.data.id,
+    linkedTo: dependsOnId,
+    relationType: "System.LinkTypes.Dependency-Reverse",
+  };
+}

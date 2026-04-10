@@ -23,9 +23,12 @@
  */
 
 import { execSync } from "child_process";
+import fs from "fs";
+import path from "path";
 
 import { getWorkItem } from "../tools/ado/get-work-item.js";
 import { updateWorkItemState, addWorkItemComment } from "../tools/ado/update-work-item.js";
+import { createWorkItem } from "../tools/ado/create-work-item.js";
 import { ticketAgent } from "../agents/ticketAgent.js";
 import { codeAgent } from "../agents/codeAgent.js";
 import { reviewAgent } from "../agents/reviewAgent.js";
@@ -119,6 +122,41 @@ async function safeAdoComment(taskId, comment) {
   }
 }
 
+const extractScenariosFromAcceptanceCriteria = (criteriaText = "") => {
+  const lines = String(criteriaText)
+    .split(/\r?\n/)
+    .map((line) => line.replace(/^[\-\*\u2022]\s*/, "").trim())
+    .filter(Boolean);
+  if (lines.length > 0) return lines;
+  return [
+    "Validate expected happy-path behavior.",
+    "Validate validation and error handling behavior.",
+    "Validate role/permission and access-control behavior.",
+  ];
+}
+
+const writeScenarioChecklistFile = ({ task, scenarios }) => {
+  const dir = path.join(process.cwd(), "tmp", "review-checklists");
+  fs.mkdirSync(dir, { recursive: true });
+  const checklistPath = path.join(dir, `task-${task.id}-scenario-checklist.md`);
+  const content = [
+    `# Scenario Checklist — Task #${task.id}`,
+    ``,
+    `Title: ${task.title}`,
+    `Generated: ${new Date().toISOString()}`,
+    ``,
+    `## Scenarios to verify`,
+    ...scenarios.map((s, idx) => `${idx + 1}. [ ] ${s}`),
+    ``,
+    `## Review sign-off`,
+    `- [ ] Code-wise verified`,
+    `- [ ] UI-wise verified`,
+    `- [ ] Test-wise verified`,
+  ].join("\n");
+  fs.writeFileSync(checklistPath, content, "utf8");
+  return checklistPath;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Main workflow
 // ─────────────────────────────────────────────────────────────────────────────
@@ -167,6 +205,7 @@ export async function runWorkflow(taskId, options = {}) {
     name: process.env.REPO_NAME,
   };
   const baseBranch = options.baseBranch ?? process.env.BASE_BRANCH ?? "main";
+  const autoCreateBugOnReviewFail = options.autoCreateBugOnReviewFail ?? true;
 
   // ── Step 1: Dependency resolution ────────────────────────────────────────
   const executionOrder = await taskDependencyResolver.resolveExecutionOrder(id);
@@ -174,21 +213,42 @@ export async function runWorkflow(taskId, options = {}) {
     if (execId === id) continue;
     const depCheck = await taskDependencyResolver.ensureDependenciesCompleted(execId);
     if (!depCheck.ok) {
-      throw new Error(`Dependency task ${execId} is not completed`);
+      const blockerText = depCheck.blockedBy
+        .map((b) => `#${b.id} [${b.state}] ${b.title}`)
+        .join("\n");
+      throw new Error(
+        `Task #${id} cannot start because work is not in sequence.\n` +
+          `Complete predecessor task(s) first:\n${blockerText}`
+      );
     }
   }
 
   // ── Step 2: Fetch task ────────────────────────────────────────────────────
   const task = await getWorkItem(id);
   logger.logAgentStep("ADO", `Fetched work item "${task.title}"`);
+  const checklistPath = writeScenarioChecklistFile({
+    task,
+    scenarios: extractScenariosFromAcceptanceCriteria(task.acceptanceCriteria),
+  });
+  await safeAdoComment(
+    id,
+    `Scenario checklist generated for review and testing:\n\n${checklistPath}`
+  );
 
   const depStatus = await taskDependencyResolver.ensureDependenciesCompleted(id);
   if (!depStatus.ok) {
     const blocked = depStatus.blockedBy
       .map((b) => `#${b.id} [${b.state}] ${b.title}`)
       .join("\n");
-    await safeAdoComment(id, `Blocked by dependencies:\n\n${blocked}`);
-    throw new Error(`Task #${id} blocked by incomplete dependencies`);
+    await safeAdoComment(
+      id,
+      `Task cannot start because it is out of sequence.\n\n` +
+        `Complete predecessor task(s) first:\n${blocked}`
+    );
+    throw new Error(
+      `Task #${id} cannot start because it is out of sequence.\n` +
+        `Complete predecessor task(s) first:\n${blocked}`
+    );
   }
 
   // ── Step 3: PO analysis ───────────────────────────────────────────────────
@@ -325,11 +385,47 @@ export async function runWorkflow(taskId, options = {}) {
   const review = await reviewAgent.reviewPullRequest(pr.number, branchName, { baseBranch });
 
   if (!review.approved) {
+    let createdBug = null;
+    if (autoCreateBugOnReviewFail) {
+      try {
+        createdBug = await createWorkItem({
+          type: "Bug",
+          title: `Review gap: ${task.title}`,
+          description:
+            `Automated review found gaps for task #${task.id}.\n\n` +
+            `Checklist file: ${checklistPath}\n\n` +
+            `Please fix and re-run DeveloperAgent + ReviewAgent cycle.`,
+          acceptanceCriteria: [
+            "All review issues are resolved.",
+            "All checklist scenarios pass (code/UI/test).",
+            "No new review issues are reported in re-review.",
+          ].join("\n"),
+          sprint: task.iterationPath,
+          areaPath: task.areaPath,
+          parentId: task.id,
+        });
+      } catch (err) {
+        logger.warn(`Failed to create bug ticket on review failure: ${err.message}`);
+      }
+    }
     await safeAdoComment(
       id,
-      `PR review failed for ${pr.url}\n\nIssues:\n${review.analysis.issues.join("\n")}`
+      `PR review failed for ${pr.url}\n\n` +
+        `Issues:\n${review.analysis.issues.join("\n")}\n\n` +
+        `Checklist: ${checklistPath}\n` +
+        (createdBug
+          ? `Bug created for rework: #${createdBug.id} ${createdBug.url}\n`
+          : "Bug ticket was not created automatically.\n") +
+        `Please re-run development after fixing and then re-review.`
     );
-    return { success: false, pr, review, merged: false };
+    return {
+      success: false,
+      pr,
+      review,
+      merged: false,
+      checklistPath,
+      bug: createdBug,
+    };
   }
 
   // ── Step 13: Merge ────────────────────────────────────────────────────────

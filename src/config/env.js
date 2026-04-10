@@ -54,6 +54,11 @@ export const DEBUG = Boolean(process.env.DEBUG);
 // ── MCP Server ────────────────────────────────────────────────────────────────
 
 export const MCP_PORT = process.env.MCP_PORT ?? "3000";
+export const DEFAULT_AREA_PATH = process.env.DEFAULT_AREA_PATH;
+export const DEFAULT_SPRINT_PATH =
+  process.env.DEFAULT_SPRINT_PATH;
+export const DEFAULT_BACKLOG_TAGS =
+  process.env.DEFAULT_BACKLOG_TAGS;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Validators — throw early with actionable messages when vars are absent.

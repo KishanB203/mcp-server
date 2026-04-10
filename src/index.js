@@ -23,10 +23,16 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
+import fs from "fs";
 
 // Config — must be imported before any infrastructure module so that dotenv
 // is loaded and process.env is populated before clients are instantiated.
-import { validateAdoConfig } from "./config/env.js";
+import {
+  validateAdoConfig,
+  DEFAULT_AREA_PATH,
+  DEFAULT_SPRINT_PATH,
+  DEFAULT_BACKLOG_TAGS,
+} from "./config/env.js";
 import { TOOLS } from "./config/tool-definitions.js";
 
 // Infrastructure clients
@@ -35,7 +41,12 @@ import { validateFigmaConfig } from "./infrastructure/figma-client.js";
 // ADO tools
 import { getWorkItem } from "./tools/ado/get-work-item.js";
 import { listWorkItems } from "./tools/ado/list-work-items.js";
-import { updateWorkItemState, addWorkItemComment } from "./tools/ado/update-work-item.js";
+import {
+  updateWorkItemState,
+  addWorkItemComment,
+  addWorkItemDependency,
+} from "./tools/ado/update-work-item.js";
+import { createWorkItem } from "./tools/ado/create-work-item.js";
 
 // Figma tools
 import {
@@ -89,6 +100,16 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         return text(formatWorkItemList(await listWorkItems(args)));
 
       case "ado_create_work_item": {
+        const requestedType = String(args.type ?? "Task").toLowerCase();
+        const isBacklogType =
+          requestedType === "task" ||
+          requestedType === "user story" ||
+          requestedType === "product backlog item";
+        if (isBacklogType) {
+          throw new Error(
+            "Direct backlog creation is blocked. Run `agent_generate_solution_requirements` first so requirements are converted before creating User Story/Task items."
+          );
+        }
         const item = await ticketAgent.createTicket(args);
         return text(
           `Work item created:\n` +
@@ -232,36 +253,40 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case "agent_generate_solution_requirements": {
-        const r = codeAgent.generateRequirements({
+        const r = await codeAgent.generateRequirements({
           featureName: args.featureName,
           figmaInput: args.figmaInput,
           businessRequirements: args.businessRequirements,
           outputDir: args.outputDir,
+          requirementDocPath: args.requirementDocPath,
+          figmaImagesDir: args.figmaImagesDir,
         });
-        const frontendFiles = r.files.filter((f) => f.role === "frontend");
-        const backendFiles = r.files.filter((f) => f.role === "backend");
+        const figmaMeta = [
+          r.figmaAnalysis?.fileKey ? `**Figma file key:** ${r.figmaAnalysis.fileKey}` : null,
+          r.figmaAnalysis?.warning ? `**Figma API:** ${r.figmaAnalysis.warning}` : null,
+        ]
+          .filter(Boolean)
+          .join("\n");
+        const src = r.sources;
+        const sourceLines = [
+          `**Requirements file:** \`${src.requirementFile}\``,
+          `**Figma screenshots folder:** \`${src.figmaImagesDir}\` (${src.imageFileCount} image(s))`,
+        ].join("\n");
         return text(
-          `# SolutionRequirementsAgent — Documentation Generated\n\n` +
+          `# SolutionRequirementsAgent — Codex prompt\n\n` +
           `**Feature:** ${r.featureName}\n` +
-          `**Output directory:** ${r.outputDir}\n` +
-          `**Context:** \`${r.contextFile}\`\n` +
-          `**Frontend folder:** \`${r.frontendDir}\` (${frontendFiles.length} module file(s))\n` +
-          `**Backend folder:** \`${r.backendDir}\` (${backendFiles.length} file(s))\n\n` +
-          `## Frontend modules\n` +
-          (frontendFiles.length
-            ? frontendFiles.map((f) => `- ${f.name}: \`${f.path}\``).join("\n")
-            : "(none)") +
-          `\n\n## Backend specs\n` +
-          backendFiles.map((f) => `- \`${f.name}\`: \`${f.path}\``).join("\n") +
-          `\n\n${r.note}`
+          `${sourceLines}\n` +
+          (figmaMeta ? `\n${figmaMeta}\n` : "") +
+          `\n${r.note}\n\n---\n\n${r.codexPrompt}`
         );
-      }
+      } 
 
       case "agent_full_workflow": {
         const result = await runWorkflow(args.taskId, {
           skipFigma: args.skipFigma,
           skipArch: args.skipArch,
           force: args.force,
+          autoCreateBugOnReviewFail: args.autoCreateBugOnReviewFail,
         });
 
         if (!result.success) {

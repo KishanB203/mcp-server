@@ -81,9 +81,11 @@ export async function createWorkItem({
   state,
   assignedTo,
   sprint,
+  areaPath,
   tags,
   priority,
   storyPoints,
+  parentId,
 } = {}) {
   const trimmedTitle = typeof title === "string" ? title.trim() : "";
   if (!trimmedTitle) throw new Error("title is required");
@@ -95,9 +97,20 @@ export async function createWorkItem({
   addFieldPatch(patch, "System.State", state);
   addFieldPatch(patch, "System.AssignedTo", assignedTo);
   addFieldPatch(patch, "System.IterationPath", sprint);
+  addFieldPatch(patch, "System.AreaPath", areaPath);
   addFieldPatch(patch, "System.Tags", tags);
   addFieldPatch(patch, "Microsoft.VSTS.Common.Priority", priority);
   addFieldPatch(patch, "Microsoft.VSTS.Scheduling.StoryPoints", storyPoints);
+  if (parentId !== undefined && parentId !== null) {
+    patch.push({
+      op: "add",
+      path: "/relations/-",
+      value: {
+        rel: "System.LinkTypes.Hierarchy-Reverse",
+        url: `https://dev.azure.com/${process.env.ADO_ORG}/${process.env.ADO_PROJECT}/_apis/wit/workItems/${parentId}`,
+      },
+    });
+  }
 
   try {
     const response = await adoClient.post(

@@ -1,296 +1,256 @@
-import fs from "fs";
+import fs from "fs/promises";
 import path from "path";
+import { figmaClient, validateFigmaConfig } from "../infrastructure/figma-client.js";
 
-const slugify = (text = "") => {
-  return String(text)
-    .toLowerCase()
-    .replace(/[^a-z0-9\s-]/g, "")
-    .replace(/\s+/g, "-")
-    .replace(/-+/g, "-")
-    .replace(/^-|-$/g, "");
+/**
+ * Fixed structure + mandatory depth so Codex output is implementation-ready for a full-stack team.
+ * Tables and schema are required where applicable so outputs are not only narrative bullets.
+ */
+const STANDARD_OUTPUT_FORMAT = `### Standard output format (Markdown). Use these **top-level sections**, in this order. Be exhaustive: a senior engineer should be able to start implementation without guesswork. Prefer **Markdown tables** wherever they clarify roles, fields, APIs, rules, or comparisons.
+
+1. **Overview**
+   - Feature name, purpose, in-scope / out-of-scope (short).
+   - **Actors & permissions matrix** (table): Actor | Goal | Allowed actions | Forbidden actions | Data visibility.
+   - Key user journeys in 1–2 lines each (Admin vs others).
+
+2. **Business requirements**
+   - Goals, KPIs or success criteria if inferable.
+   - **Business rules** as numbered rules; where a rule is conditional, add a **decision-style table** (Condition | Outcome | Exception).
+   - Org/process constraints, compliance, audit expectations if mentioned or strongly implied.
+
+3. **Functional / logical (end-to-end behavior)**
+   - Per major capability: user-visible behavior, validations, empty/loading/error states.
+   - **Screen / flow inventory** (table): Screen or flow | Primary actor | Entry | Exit | Critical validations | Notes.
+   - **State machines or step flows** (table or bullet steps): e.g. draft → published, Step 1 → Step 2, with allowed transitions and what resets on cancel/back.
+   - **Authorization matrix** (table): Operation (CRUD, export, assign, etc.) | Admin | Normal User | Enforcement layer (UI only / API mandatory).
+   - Edge cases, idempotency, concurrency (e.g. double submit), bulk actions, deletion cascades.
+
+4. **Technical requirements — full stack**
+   - **Architecture** (1 short paragraph): suggested layering (e.g. SPA + BFF + service + DB + object storage), and where business rules MUST be enforced (always server-side for authz and sensitive invariants).
+
+   - **Database schema (mandatory)**  
+     Provide concrete relational (or documented NoSQL) schema, not just a prose list of entities:
+     - **Table / collection list** (table): Name | Purpose | Key relationships.
+     - **Per table**: columns with **SQL-oriented types** (or BSON/JSON field types for document DB), **PK/FK**, **unique constraints**, **NOT NULL**, defaults, **check constraints** where useful.
+     - **Indexes** for listing, search, and FK lookups; note partial indexes if filtering soft-deleted rows.
+     - **Enums / lookup** tables or allowed values inline.
+     - **Audit fields** (created_at, updated_at, created_by, etc.) and **soft delete** strategy if applicable.
+     - **Referential integrity** on delete/update (RESTRICT, CASCADE, SET NULL) for policies, files, assignments.
+     - Optional: **example DDL** snippet (CREATE TABLE …) for core tables if it reduces ambiguity.
+
+   - **Domain model & business logic on the server**
+     - Entities, aggregates, invariants (what must never happen in DB).
+     - Services / use-cases: inputs, outputs, side effects (emails, files, audit logs).
+     - **Cross-field rules** (table): Rule | Trigger | Validation error code/message.
+
+   - **API contract**
+     - **Endpoint summary** (table): Method | Path | Purpose | Authz | Idempotent? | Main query/body params | Success response | Error cases.
+     - Request/response **JSON shapes** (field name, type, required, constraints) for non-trivial endpoints.
+     - **Pagination, sorting, filtering** contract; standard error envelope and **HTTP status** usage (401/403/404/409/422).
+     - File upload: max size, MIME whitelist, virus scan hook if relevant, storage key pattern.
+
+   - **Frontend / client**
+     - Route map or view list tied to roles; what is client-only vs server-validated.
+     - State to persist (draft forms, query params), accessibility and responsive notes if designs imply.
+     - Caching, optimistic UI only where safe; CSRF/session cookie vs bearer token model.
+
+   - **Integrations & async** — Webhooks, jobs, email, third-party libs — only if required by spec or screenshots.
+
+   - **Non-functional** — Security (authn/z, OWASP-relevant), performance (SLAs, N+1 avoidance), observability (logs, metrics, traces), backups for files + DB.
+
+5. **Design alignment** — For each major screen/area: what **screenshots** show vs **requirement.md**; gaps, conflicts, recommended resolution.
+
+6. **Traceability** — Table: Requirement ID or short name | Statement | Source (\`requirement.md\` heading and/or screenshot filename).
+
+7. **Assumptions & open questions** — Numbered; call out spec/design conflicts explicitly.
+
+**Density & style:** Use subheadings, bullet lists, and **many Markdown tables**. Avoid vague phrases like "handle appropriately" — specify behavior, limits, and failure modes. If the written spec is silent on a topic, state a **reasonable assumption** in section 7 rather than omitting the topic entirely.
+
+**Examples (tone, not content):**
+- Business rule table row: *Duplicate category name → block create → show validation on name field.*
+- API row: *GET /documents* | list | Bearer + role | filters: categoryId, q, deptId | 200 + pagination object | 403 if role cannot see dept.*`;
+
+function extractFigmaFileKey(figmaInput = "") {
+  const text = String(figmaInput || "").trim();
+  if (!text) return null;
+
+  const urlMatch = text.match(/figma\.com\/(?:file|design)\/([a-zA-Z0-9]+)/i);
+  if (urlMatch?.[1]) return urlMatch[1];
+
+  if (/^[a-zA-Z0-9]{10,}$/.test(text)) return text;
+  return null;
 }
 
-const toTitle = (slug = "") => {
-  return String(slug)
-    .split("-")
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" ");
-}
+function collectNodeNames(nodes = [], out = []) {
+  for (const node of nodes) {
+    if (!node) continue;
+    const name = String(node.name || "").trim();
+    if (
+      name &&
+      name.length >= 3 &&
+      name.length <= 80 &&
+      /[a-zA-Z]/.test(name) &&
+      !/^(frame|group|page|component)$/i.test(name)
+    ) {
+      out.push(name);
+    }
 
-const ensureDir = (dirPath) => {
-  fs.mkdirSync(dirPath, { recursive: true });
-}
-
-const extractItems = (text = "") => {
-  return String(text)
-    .split(/\r?\n|,|;/g)
-    .map((line) => line.trim())
-    .filter(Boolean);
-}
-
-const inferUiModules = (rawText = "") => {
-  const lines = extractItems(rawText);
-  const modules = [];
-  const seen = new Set();
-
-  for (const line of lines) {
-    const normalized = line.toLowerCase();
-    const directMatches = [
-      "navbar",
-      "sidebar",
-      "content area",
-      "content",
-      "profile dropdown",
-      "dropdown",
-      "header",
-      "footer",
-      "search bar",
-      "filter panel",
-      "list",
-      "table",
-      "form",
-      "modal",
-      "tabs",
-      "card",
-      "pagination",
-      "breadcrumb",
-    ];
-
-    for (const candidate of directMatches) {
-      if (normalized.includes(candidate)) {
-        const moduleSlug = slugify(candidate.replace(/\s+/g, " "));
-        if (!seen.has(moduleSlug)) {
-          seen.add(moduleSlug);
-          modules.push({
-            slug: moduleSlug,
-            title: toTitle(moduleSlug),
-            sourceText: line,
-          });
-        }
-      }
+    if (Array.isArray(node.children) && node.children.length > 0) {
+      collectNodeNames(node.children, out);
     }
   }
-
-  if (modules.length === 0) {
-    return [
-      { slug: "header", title: "Header", sourceText: "Inferred from screen-level layout" },
-      { slug: "main-content", title: "Main Content", sourceText: "Inferred from core task intent" },
-      { slug: "primary-actions", title: "Primary Actions", sourceText: "Inferred from expected user actions" },
-    ];
-  }
-
-  return modules;
+  return out;
 }
 
-const buildRequirementConversion = (requirements = "") => {
-  const lines = extractItems(requirements);
-  if (lines.length === 0) {
-    return "- No structured requirements provided; inferred from design and common full-stack patterns.";
-  }
+async function collectFigmaUiHints(figmaInput = "") {
+  const fileKey = extractFigmaFileKey(figmaInput);
+  if (!fileKey) return { fileKey: null, hints: [], error: null };
 
-  const bullets = [];
-  for (const line of lines) {
-    const normalized = line.toLowerCase();
-    if (normalized.includes("navbar")) {
-      bullets.push("- Navbar is required and should contain clearly labeled navigation items.");
-      continue;
-    }
-    if (normalized.includes("profile")) {
-      bullets.push("- Profile entry should open a dropdown menu with user-level options.");
-      continue;
-    }
-    if (normalized.includes("tab")) {
-      bullets.push("- Tabs should switch visible content instantly and highlight active tab.");
-      continue;
-    }
-    if (normalized.includes("api") || normalized.includes("endpoint")) {
-      bullets.push(`- ${line.charAt(0).toUpperCase()}${line.slice(1)} (backend exposure must be specified in backend/api-surface.md).`);
-      continue;
-    }
-    bullets.push(`- ${line.charAt(0).toUpperCase()}${line.slice(1)}`);
-  }
+  try {
+    validateFigmaConfig();
+    const response = await figmaClient.get(`/files/${fileKey}`, {
+      params: { depth: 4 },
+    });
 
-  return bullets.join("\n");
+    const pageNames = (response.data.document?.children ?? [])
+      .map((p) => p?.name)
+      .filter(Boolean)
+      .slice(0, 20);
+    const nodeNames = collectNodeNames(response.data.document?.children ?? [])
+      .slice(0, 100);
+
+    return {
+      fileKey,
+      hints: [...pageNames, ...nodeNames],
+      error: null,
+    };
+  } catch (error) {
+    return {
+      fileKey,
+      hints: [],
+      error: error.message,
+    };
+  }
 }
 
-const buildSolutionContextMd = ({ featureName, figmaInput, requirements, uiModules }) => {
-  const featureLabel = featureName || "Feature";
-  const moduleList = uiModules.map((m) => `- ${m.title}`).join("\n");
-  const assumptions = [
-    "UI copy and labels follow product language from the design or stakeholder input.",
-    "When timing is unspecified, UI reflects successful operations after the server acknowledges the action (optimistic UI only if explicitly required).",
-    "When requirements are ambiguous, choose predictable, secure, and accessible defaults.",
-    "Backend contracts (APIs, persistence) are defined at the requirements level; implementation technology stack is project-specific.",
+async function readTextFile(absPath) {
+  try {
+    const text = await fs.readFile(absPath, "utf8");
+    return text.trim();
+  } catch {
+    return "";
+  }
+}
+
+function toPosixPath(p) {
+  return String(p).split(path.sep).join("/");
+}
+
+async function listImageFiles(dirPath) {
+  try {
+    const entries = await fs.readdir(dirPath, { withFileTypes: true });
+    return entries
+      .filter((e) => e.isFile() && /\.(png|jpe?g|webp|gif)$/i.test(e.name))
+      .map((e) => e.name)
+      .sort();
+  } catch {
+    return [];
+  }
+}
+
+function buildFigmaApiLines(figmaInsight) {
+  const lines = [];
+  if (figmaInsight?.fileKey) {
+    lines.push(
+      `Optional Figma file key from link: ${figmaInsight.fileKey} — use if you open the file in Figma; screenshots remain the primary UI reference.`
+    );
+  }
+  if (figmaInsight?.hints?.length) {
+    lines.push(`Layer/page name hints: ${figmaInsight.hints.slice(0, 20).join(", ")}`);
+  }
+  if (figmaInsight?.error) {
+    lines.push(`Figma API unavailable (${figmaInsight.error}). Rely on screenshot folder + requirement.md.`);
+  }
+  return lines;
+}
+
+function buildCodexSolutionPrompt({
+  featureName,
+  figmaInput,
+  requirementBody,
+  requirementDocDisplayPath,
+  figmaImagesDirDisplayPath,
+  imageFiles,
+  figmaInsight,
+}) {
+  const figmaLink = (figmaInput || "").trim();
+  const figmaApiLines = buildFigmaApiLines(figmaInsight);
+
+  const imageNote =
+    imageFiles.length > 0
+      ? `Screenshots found (${imageFiles.length}): ${imageFiles.join(", ")}`
+      : "No image files found in this folder yet — add PNG/JPEG/WebP/GIF exports from Figma.";
+
+  const lines = [
+    `Feature: ${featureName}`,
+    "",
+    "You have two inputs to combine:",
+    `1) **Written requirements** — file path: \`${requirementDocDisplayPath}\` (content below).`,
+    `2) **Figma design exports** — study every image in folder: \`${figmaImagesDirDisplayPath}\`. ${imageNote}`,
+    "",
+    "Produce **feature-based Markdown files** in one folder (not a single combined file).",
+    "",
+    "Output packaging (mandatory):",
+    "- Create folder: `./solution-requirements/` (relative to the current working directory where Codex is running).",
+    "- Create one file per major feature/module discovered from the requirements + screenshots.",
+    "- File naming: kebab-case, e.g. `auth-login.md`, `category-management.md`, `policy-listing.md`, `policy-create-flow.md`, `access-control.md`.",
+    "- Also create `./solution-requirements/index.md` with a table of contents: Feature | File | Scope summary.",
+    "- Avoid duplication: if a rule is shared across features, keep canonical detail in one file and link to it from others.",
+    "- Every feature file must still follow the standard section format below.",
+    "",
+    "Write behavior (mandatory to avoid shell/OS output limits):",
+    "- Generate and write files **incrementally**: complete one feature file, write it to disk immediately, then continue to the next file.",
+    "- Do **not** build all file contents in memory and write everything at the end.",
+    "- Update `./solution-requirements/index.md` after each new feature file is written.",
+    "- If generation is interrupted, already-written files must remain usable.",
+    "",
+    "Content goals for each feature file:",
+    "- **Full-stack technical depth**: backend (API + domain rules + persistence), database **schema with tables/columns/constraints/indexes**, file/storage behavior, and frontend (routes, role-gated UI, validation split client/server).",
+    "- **Business logic**: every authorization rule, visibility rule, validation, and lifecycle transition spelled out; use **tables** for matrices (actors × actions, screens × rules, API summary, cross-field rules).",
+    "- **Tabular layout**: use Markdown tables anywhere they improve clarity (not only in Traceability). Narrative bullets alone are insufficient for sections 3–4.",
+    "- Merge **written spec + screenshots**; where they conflict, document both and add an explicit resolution or open question in Assumptions.",
+    "- Include database impact for that feature (tables touched, columns, constraints, indexes). If a shared schema spans features, split ownership clearly and cross-link.",
+    "- Include API endpoints per feature and identify dependencies on other feature files.",
+    "",
+    STANDARD_OUTPUT_FORMAT,
+    "",
+    "---",
+    "",
+    "### Optional Figma link (extra context)",
+    figmaLink || "(Not provided.)",
   ];
-
-  return `# ${featureLabel} — Full-stack requirements context
-
-## Feature / product overview
-- This documentation set covers **frontend UX** and **backend capabilities** for **${featureLabel}**.
-- Design input: ${figmaInput ? `"${figmaInput}"` : "No Figma link provided; use written screen description and requirements."}.
-
-## Business purpose
-- Deliver end-to-end value: users interact via the UI; the system enforces rules and persists state via backend services and data stores.
-
-## User goals (experience)
-- Complete primary tasks with minimal friction.
-- See accurate data and clear feedback (success, validation, system errors).
-- Trust that sensitive actions are authorized and auditable where applicable.
-
-## UI structure summary (high-level)
-${moduleList}
-
-## Backend scope summary (high-level)
-- **API surface:** Operations the client needs to read/write domain data — see \`backend/api-surface.md\`.
-- **Data:** Entities, relationships, and persistence expectations — see \`backend/data-model.md\`.
-- **Services & integrations:** Server-side rules and external systems — see \`backend/services-and-integrations.md\`.
-- **Security & auth:** Authentication, authorization, and cross-cutting policies — see \`backend/security-and-auth.md\`.
-
-## Assumptions
-${assumptions.map((a) => `- ${a}`).join("\n")}
-
-## Cross-cutting quality
-- **Consistency:** Same business rules enforced in API and reflected in UI validation where both exist.
-- **Idempotency / safety:** Mutations that repeat (retries, double-submit) should be safe or explicitly documented.
-- **Observability:** Log-worthy events and error surfaces for operators (requirements-level; no vendor lock-in).
-
-## Experience-level states (full stack)
-- **Loading:** UI shows progress; backend may be processing; avoid duplicate submits.
-- **Empty:** UI empty state; backend may return empty collections — not an error.
-- **Error:** UI shows actionable message; backend returns structured error contract (see api-surface).
-- **Conflict:** Concurrent edits or stale data — resolution flow documented in API and UI behavior.
-
-## Standardized requirement conversion (raw → structured)
-${buildRequirementConversion(requirements)}
-
-## Documentation layout
-- \`context.md\` (this file) — umbrella context
-- \`frontend/*.md\` — per-UI-module specs
-- \`backend/*.md\` — API, data, services, security
-`;
+  for (const line of figmaApiLines) {
+    if (line) lines.push(line);
+  }
+  lines.push(
+    "",
+    "---",
+    "",
+    "### Written requirements (`requirement.md` and any pasted additions)",
+    requirementBody
+  );
+  return lines.join("\n");
 }
 
-const frontendModuleTemplate = ({ module }) => {
-  return `# ${module.title} (frontend)
-
-## 1. Business purpose
-- Supports a distinct part of the user journey and keeps the screen composable.
-
-## 2. UI description (from Figma / design)
-- **Layout:** Match design for ${module.title}.
-- **Elements:** All visible controls (buttons, tabs, icons, text, inputs) in this region.
-- **Visual hierarchy:** Primary actions are visually stronger than secondary.
-
-## 3. Functional behavior
-- **Primary action:** Triggers the main flow (may invoke client → API per feature contract).
-- **Selection:** Updates active item and dependent UI; highlights selection.
-- **Input:** Local state on change; validation before submit; block invalid submits.
-
-## 4. User interactions
-- Click, hover, focus, keyboard (Tab order, Enter/Space on controls).
-
-## 5. State handling
-- **Default, active, disabled, loading, empty, error** — including mapping from API outcomes where applicable (no implementation code here).
-
-## 6. Validation (UI + contract alignment)
-- Required fields, lengths, formats; messages must align with API validation errors where both exist.
-
-## 7. Component structure
-- Container + presentational pieces; props/callbacks; optional loading/error props from parent or data layer.
-
-## 8. Styling notes
-- Spacing, alignment, breakpoints (mobile / tablet / desktop), interactive states.
-`;
-}
-
-const backendApiSurfaceTemplate = (featureLabel) => {
-  return `# API surface — ${featureLabel}
-
-## 1. Purpose
-- Define **what** the client calls, not **how** it is coded (framework-agnostic requirements).
-
-## 2. Resource / operation list
-- List each capability as a named operation (e.g. list, get by id, create, update, delete, custom actions).
-- For each: **HTTP method + path pattern** (or message/event name if async), **auth requirement**, **idempotency** expectation.
-
-## 3. Request / response (requirements level)
-- Required fields, optional fields, enumerations, pagination/filter/sort parameters.
-- Success body shape (fields and meaning); list vs single resource rules.
-
-## 4. Error contract
-- Validation errors (field-level if applicable), not found, conflict, authorization failure, rate limit.
-- **Do not** invent specific HTTP codes beyond generic guidance unless product mandates — document expected categories.
-
-## 5. Versioning and compatibility
-- Breaking vs additive changes; deprecation expectations.
-
-## 6. Relation to UI
-- Map each major UI action to the operation(s) it depends on (table in implementation phase).
-`;
-}
-
-const backendDataModelTemplate = (featureLabel) => {
-  return `# Data model — ${featureLabel}
-
-## 1. Domain entities
-- Name each entity, its business meaning, and identifier strategy.
-
-## 2. Attributes
-- Per entity: fields, types at conceptual level, required/optional, uniqueness, defaults.
-
-## 3. Relationships
-- One-to-many, many-to-many, ownership, cascade/delete rules at requirement level.
-
-## 4. Persistence expectations
-- What must be durable vs derived; retention if mentioned in requirements.
-
-## 5. Constraints & invariants
-- Business rules that must hold in storage (e.g. status transitions, totals).
-
-## 6. Migration / seed (if applicable)
-- Initial reference data or feature flags mentioned by stakeholders.
-`;
-}
-
-const backendServicesTemplate = (featureLabel) => {
-  return `# Services & integrations — ${featureLabel}
-
-## 1. Application / domain services
-- Orchestration steps that are not a single CRUD call (e.g. “submit order”, “approve request”).
-
-## 2. Business rules on the server
-- Rules that must not be bypassed by clients; duplicates of UI validation where both apply.
-
-## 3. External integrations
-- Third-party systems, webhooks, email/SMS/payment providers — inputs, outputs, failure handling at spec level.
-
-## 4. Background / async work (if any)
-- Jobs, queues, scheduled tasks — triggers and expected user-visible effects.
-
-## 5. Caching & performance (requirements)
-- What may be cached, TTL expectations, staleness acceptable to users.
-`;
-}
-
-const backendSecurityTemplate = (featureLabel) => {
-  return `# Security & auth — ${featureLabel}
-
-## 1. Authentication
-- How users prove identity for this feature (session, token, SSO) — requirement-level only.
-
-## 2. Authorization
-- Roles or permissions needed per operation; row-level or resource-level rules if applicable.
-
-## 3. Data protection
-- PII/sensitive fields; masking in UI; encryption at rest/in transit expectations if stated.
-
-## 4. Threat considerations
-- CSRF (for cookie sessions), injection, mass assignment, IDOR — mitigation expectations at spec level.
-
-## 5. Audit & compliance
-- Who did what, when — if required by business or regulation.
-`;
+async function mergeRequirementText(absDocPath, businessRequirements) {
+  const fromFile = await readTextFile(absDocPath);
+  const extra = String(businessRequirements || "").trim();
+  if (fromFile && extra) {
+    return `${fromFile}\n\n---\n\n### Additional notes (from tool)\n\n${extra}`;
+  }
+  if (fromFile) return fromFile;
+  if (extra) return extra;
+  return "";
 }
 
 export class SolutionRequirementsAgent {
@@ -300,68 +260,57 @@ export class SolutionRequirementsAgent {
   }
 
   /**
-   * Generates implementation-ready requirement docs: frontend modules + backend capability specs.
+   * Builds a Codex prompt from ./requirement.md + ./figma screenshots + optional Figma link.
    */
-  generateDocs({
+  async generateDocs({
     featureName,
     figmaInput,
     businessRequirements,
     outputDir = process.cwd(),
+    requirementDocPath = "requirement.md",
+    figmaImagesDir = "figma",
   }) {
     const safeFeature = featureName?.trim() || "feature";
-    const featureSlug = slugify(safeFeature) || "feature";
-    const docsRoot = path.join(outputDir, "docs", featureSlug);
-    const frontendDir = path.join(docsRoot, "frontend");
-    const backendDir = path.join(docsRoot, "backend");
-    ensureDir(frontendDir);
-    ensureDir(backendDir);
+    const base = path.resolve(outputDir);
+    const requirementAbs = path.join(base, requirementDocPath);
+    const figmaImagesAbs = path.join(base, figmaImagesDir);
 
-    const uiModules = inferUiModules(`${figmaInput || ""}\n${businessRequirements || ""}`);
+    const requirementBody = await mergeRequirementText(requirementAbs, businessRequirements);
+    const resolvedBody =
+      requirementBody.trim() ||
+      "(No requirement text yet: add content to requirement.md and/or pass businessRequirements.)";
 
-    const contextPath = path.join(docsRoot, "context.md");
-    fs.writeFileSync(
-      contextPath,
-      buildSolutionContextMd({
-        featureName: safeFeature,
-        figmaInput,
-        requirements: businessRequirements,
-        uiModules,
-      }),
-      "utf8"
-    );
+    const imageFiles = await listImageFiles(figmaImagesAbs);
+    const figmaInsight = await collectFigmaUiHints(figmaInput);
 
-    const createdFiles = [{ role: "context", name: "context.md", path: contextPath }];
-
-    for (const module of uiModules) {
-      const filePath = path.join(frontendDir, `${module.slug}.md`);
-      fs.writeFileSync(filePath, frontendModuleTemplate({ module }), "utf8");
-      createdFiles.push({ role: "frontend", name: module.title, path: filePath });
-    }
-
-    const backendSpecs = [
-      { file: "api-surface.md", content: backendApiSurfaceTemplate(safeFeature) },
-      { file: "data-model.md", content: backendDataModelTemplate(safeFeature) },
-      { file: "services-and-integrations.md", content: backendServicesTemplate(safeFeature) },
-      { file: "security-and-auth.md", content: backendSecurityTemplate(safeFeature) },
-    ];
-
-    for (const spec of backendSpecs) {
-      const filePath = path.join(backendDir, spec.file);
-      fs.writeFileSync(filePath, spec.content, "utf8");
-      createdFiles.push({ role: "backend", name: spec.file, path: filePath });
-    }
+    const codexPrompt = buildCodexSolutionPrompt({
+      featureName: safeFeature,
+      figmaInput,
+      requirementBody: resolvedBody,
+      requirementDocDisplayPath: toPosixPath(path.relative(base, requirementAbs) || requirementDocPath),
+      figmaImagesDirDisplayPath: toPosixPath(path.relative(base, figmaImagesAbs) || figmaImagesDir),
+      imageFiles,
+      figmaInsight,
+    });
 
     return {
       agent: this.name,
       role: this.role,
       featureName: safeFeature,
-      outputDir: docsRoot,
-      contextFile: contextPath,
-      frontendDir,
-      backendDir,
-      files: createdFiles,
+      codexPrompt,
+      sources: {
+        requirementFile: requirementAbs,
+        figmaImagesDir: figmaImagesAbs,
+        imageFileCount: imageFiles.length,
+        imageFiles,
+      },
+      figmaAnalysis: {
+        fileKey: figmaInsight.fileKey,
+        analyzedNodes: figmaInsight.hints.length,
+        warning: figmaInsight.error || null,
+      },
       note:
-        "Solution requirement documentation generated: frontend modular MD + backend API/data/services/security templates. Fill in domain specifics from client input.",
+        "Paste codexPrompt into Codex. It uses requirement.md + Figma screenshot folder. Expected output: feature-based docs inside ./solution-requirements/ (with index.md) at Codex current working directory, written incrementally file-by-file (not all at once), plus full-stack technical requirements per feature including Markdown tables, DB schema impact, API contracts, and explicit business/authorization logic.",
     };
   }
 }

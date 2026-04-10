@@ -58,9 +58,11 @@ export const TOOLS = [
         state: { type: "string" },
         assignedTo: { type: "string" },
         sprint: { type: "string", description: "Iteration path (e.g. 'Project\\\\Sprint 1')" },
+        areaPath: { type: "string", description: "Area path (e.g. 'Mern Intern')" },
         tags: { type: "string", description: "Semicolon-separated tags" },
         priority: { type: "number" },
         storyPoints: { type: "number" },
+        parentId: { type: "number", description: "Parent work item ID for hierarchy link" },
       },
       required: ["title"],
     },
@@ -272,34 +274,33 @@ export const TOOLS = [
   {
     name: "agent_generate_solution_requirements",
     description:
-      "SolutionRequirementsAgent: Converts Figma/screen input + raw client requirements into " +
-      "implementation-ready docs: context.md, modular frontend/*.md UI specs, and backend/*.md " +
-      "(API surface, data model, services/integrations, security/auth).",
+      "SolutionRequirementsAgent: Returns a Codex prompt that combines requirement.md with Figma " +
+      "screenshots (figma folder by default) to produce feature-based full-stack business + technical docs " +
+      "written incrementally file-by-file.",
     inputSchema: {
       type: "object",
       properties: {
         featureName: { type: "string", description: "Feature or screen name" },
-        figmaInput: { type: "string", description: "Figma link or screen description" },
-        businessRequirements: { type: "string", description: "Raw client requirements text" },
-        outputDir: { type: "string", description: "Output directory (default: current working directory)" },
+        figmaInput: { type: "string", description: "Optional Figma file URL or key for extra context" },
+        businessRequirements: {
+          type: "string",
+          description:
+            "Optional extra requirements text; merged with requirement.md when both are provided",
+        },
+        outputDir: {
+          type: "string",
+          description: "Project root for resolving paths (default: current working directory)",
+        },
+        requirementDocPath: {
+          type: "string",
+          description: "Path to requirements markdown relative to outputDir (default: requirement.md)",
+        },
+        figmaImagesDir: {
+          type: "string",
+          description: "Folder with Figma screenshot exports relative to outputDir (default: figma)",
+        },
       },
-      required: ["featureName", "businessRequirements"],
-    },
-  },
-  {
-    name: "agent_generate_detailed_requirements",
-    description:
-      "Backward-compatible alias for agent_generate_solution_requirements. " +
-      "Generates context.md and frontend/backend requirement specs.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        featureName: { type: "string", description: "Feature or screen name" },
-        figmaInput: { type: "string", description: "Figma link or screen description" },
-        businessRequirements: { type: "string", description: "Raw client requirements text" },
-        outputDir: { type: "string", description: "Output directory (default: current working directory)" },
-      },
-      required: ["featureName", "businessRequirements"],
+      required: ["featureName"],
     },
   },
   {
@@ -315,6 +316,11 @@ export const TOOLS = [
         skipFigma: { type: "boolean", description: "Skip Figma wireframe generation" },
         skipArch: { type: "boolean", description: "Skip architecture scaffold generation" },
         force: { type: "boolean", description: "Override conflict detection" },
+        autoCreateBugOnReviewFail: {
+          type: "boolean",
+          description:
+            "If true (default), create a Bug work item when review fails and attach re-test guidance",
+        },
       },
       required: ["taskId"],
     },

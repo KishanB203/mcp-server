@@ -40,12 +40,11 @@ const extractWorkItemIdFromUrl = (url = "") => {
  */
 const isDependencyRelation = (relType = "") => {
   const t = String(relType).toLowerCase();
-  return (
-    t.includes("dependency") ||
-    t.includes("depends") ||
-    t.includes("predecessor") ||
-    t.includes("successor")
-  );
+  const isExplicitBlockingDirection =
+    t.includes("dependency-reverse") ||
+    t.includes("depends-on") ||
+    t.includes("predecessor");
+  return isExplicitBlockingDirection;
 }
 
 /**
