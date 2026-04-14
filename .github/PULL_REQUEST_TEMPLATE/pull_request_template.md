@@ -38,9 +38,6 @@
 
 
 ## 📝 Checklist
-- [ ] Follows coding standards (`rules/coding-standard.md`)
-- [ ] Follows architecture rules (`rules/architecture.md`)
-- [ ] Follows naming rules (`rules/naming-rule.md`)
 - [ ] No `console.log()` left in code
 - [ ] No hardcoded credentials
 - [ ] PR title format: `[Task-ID] Task Name`

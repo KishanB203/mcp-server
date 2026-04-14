@@ -70,13 +70,3 @@ Example: `feature/123-add-employee-form`
 ## Commit Convention
 `feat: {title} [#{id}]`
 Example: `feat: Add employee form [#123]`
-
-## Rules
-Claude MUST follow rules in `/rules/` before generating any code:
-- `architecture.md`
-- `backend-coding-standards.md`
-- `coding-standard.md`
-- `db-coding-standards.md`
-- `frontend-coding-standards.md`
-- `naming-rule.md`
-- `testing-rule.md`

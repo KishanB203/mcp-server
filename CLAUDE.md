@@ -7,13 +7,6 @@
 This project is a multi-agent AI DevOps pipeline that automates:
 Azure DevOps → Figma Design → Clean Architecture → GitHub PR → Code Review → Merge
 
-## Rules (MUST FOLLOW)
-Before generating any code, Claude MUST read and follow:
-- `rules/coding-standard.md` — code style, naming, error handling
-- `rules/architecture.md` — clean architecture layers
-- `rules/naming-rule.md` — file, variable, function naming
-- `rules/testing-rule.md` — test structure and coverage requirements
-
 ## Available MCP Tools
 
 ### Azure DevOps
