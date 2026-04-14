@@ -10,6 +10,8 @@
 
 import { adoClient } from "../../infrastructure/ado-client.js";
 
+const acceptanceFieldCache = new Map();
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Internal helpers
 // ─────────────────────────────────────────────────────────────────────────────
@@ -41,6 +43,37 @@ const addFieldPatch = (patch, fieldName, value) => {
   if (typeof value === "string" && value.trim() === "") return;
   patch.push({ op: "add", path: `/fields/${fieldName}`, value });
 }
+
+const getAcceptanceFieldRefs = async (type) => {
+  const normalizedType = String(type || "Task").replace(/^\$/, "").trim() || "Task";
+  if (acceptanceFieldCache.has(normalizedType)) {
+    return acceptanceFieldCache.get(normalizedType);
+  }
+
+  const fallback = ["Microsoft.VSTS.Common.AcceptanceCriteria"];
+
+  try {
+    const response = await adoClient.get(
+      `/wit/workitemtypes/${encodeURIComponent(normalizedType)}/fields`
+    );
+    const fields = response.data?.value ?? [];
+    const refs = fields
+      .filter((field) => {
+        const ref = String(field.referenceName || "");
+        const name = String(field.name || "");
+        return /acceptance\s*criteria/i.test(ref) || /acceptance\s*criteria/i.test(name);
+      })
+      .map((field) => String(field.referenceName || "").trim())
+      .filter(Boolean);
+
+    const merged = Array.from(new Set([...refs, ...fallback]));
+    acceptanceFieldCache.set(normalizedType, merged);
+    return merged;
+  } catch {
+    acceptanceFieldCache.set(normalizedType, fallback);
+    return fallback;
+  }
+};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Public API
@@ -93,7 +126,12 @@ export async function createWorkItem({
   const patch = [];
   addFieldPatch(patch, "System.Title", trimmedTitle);
   addFieldPatch(patch, "System.Description", description);
-  addFieldPatch(patch, "Microsoft.VSTS.Common.AcceptanceCriteria", acceptanceCriteria);
+  if (acceptanceCriteria !== undefined && acceptanceCriteria !== null && String(acceptanceCriteria).trim() !== "") {
+    const acceptanceRefs = await getAcceptanceFieldRefs(type);
+    for (const ref of acceptanceRefs) {
+      addFieldPatch(patch, ref, acceptanceCriteria);
+    }
+  }
   addFieldPatch(patch, "System.State", state);
   addFieldPatch(patch, "System.AssignedTo", assignedTo);
   addFieldPatch(patch, "System.IterationPath", sprint);

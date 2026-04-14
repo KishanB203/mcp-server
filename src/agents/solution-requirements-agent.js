@@ -2,73 +2,17 @@ import fs from "fs/promises";
 import path from "path";
 import { figmaClient, validateFigmaConfig } from "../infrastructure/figma-client.js";
 
-/**
- * Fixed structure + mandatory depth so Codex output is implementation-ready for a full-stack team.
- * Tables and schema are required where applicable so outputs are not only narrative bullets.
- */
-const STANDARD_OUTPUT_FORMAT = `### Standard output format (Markdown). Use these **top-level sections**, in this order. Be exhaustive: a senior engineer should be able to start implementation without guesswork. Prefer **Markdown tables** wherever they clarify roles, fields, APIs, rules, or comparisons.
+const WORK_ITEM_OUTPUT_FORMAT = `Generate a complete Azure DevOps work item body in this exact structure:
 
-1. **Overview**
-   - Feature name, purpose, in-scope / out-of-scope (short).
-   - **Actors & permissions matrix** (table): Actor | Goal | Allowed actions | Forbidden actions | Data visibility.
-   - Key user journeys in 1–2 lines each (Admin vs others).
+Title
+Description (clear, structured, and detailed)
+Business Value
+Scope (In Scope / Out of Scope)
+Functional Requirements (numbered list)
+Non-Functional Requirements (if applicable)
+Acceptance Criteria (in Given/When/Then format, multiple items)
 
-2. **Business requirements**
-   - Goals, KPIs or success criteria if inferable.
-   - **Business rules** as numbered rules; where a rule is conditional, add a **decision-style table** (Condition | Outcome | Exception).
-   - Org/process constraints, compliance, audit expectations if mentioned or strongly implied.
-
-3. **Functional / logical (end-to-end behavior)**
-   - Per major capability: user-visible behavior, validations, empty/loading/error states.
-   - **Screen / flow inventory** (table): Screen or flow | Primary actor | Entry | Exit | Critical validations | Notes.
-   - **State machines or step flows** (table or bullet steps): e.g. draft → published, Step 1 → Step 2, with allowed transitions and what resets on cancel/back.
-   - **Authorization matrix** (table): Operation (CRUD, export, assign, etc.) | Admin | Normal User | Enforcement layer (UI only / API mandatory).
-   - Edge cases, idempotency, concurrency (e.g. double submit), bulk actions, deletion cascades.
-
-4. **Technical requirements — full stack**
-   - **Architecture** (1 short paragraph): suggested layering (e.g. SPA + BFF + service + DB + object storage), and where business rules MUST be enforced (always server-side for authz and sensitive invariants).
-
-   - **Database schema (mandatory)**  
-     Provide concrete relational (or documented NoSQL) schema, not just a prose list of entities:
-     - **Table / collection list** (table): Name | Purpose | Key relationships.
-     - **Per table**: columns with **SQL-oriented types** (or BSON/JSON field types for document DB), **PK/FK**, **unique constraints**, **NOT NULL**, defaults, **check constraints** where useful.
-     - **Indexes** for listing, search, and FK lookups; note partial indexes if filtering soft-deleted rows.
-     - **Enums / lookup** tables or allowed values inline.
-     - **Audit fields** (created_at, updated_at, created_by, etc.) and **soft delete** strategy if applicable.
-     - **Referential integrity** on delete/update (RESTRICT, CASCADE, SET NULL) for policies, files, assignments.
-     - Optional: **example DDL** snippet (CREATE TABLE …) for core tables if it reduces ambiguity.
-
-   - **Domain model & business logic on the server**
-     - Entities, aggregates, invariants (what must never happen in DB).
-     - Services / use-cases: inputs, outputs, side effects (emails, files, audit logs).
-     - **Cross-field rules** (table): Rule | Trigger | Validation error code/message.
-
-   - **API contract**
-     - **Endpoint summary** (table): Method | Path | Purpose | Authz | Idempotent? | Main query/body params | Success response | Error cases.
-     - Request/response **JSON shapes** (field name, type, required, constraints) for non-trivial endpoints.
-     - **Pagination, sorting, filtering** contract; standard error envelope and **HTTP status** usage (401/403/404/409/422).
-     - File upload: max size, MIME whitelist, virus scan hook if relevant, storage key pattern.
-
-   - **Frontend / client**
-     - Route map or view list tied to roles; what is client-only vs server-validated.
-     - State to persist (draft forms, query params), accessibility and responsive notes if designs imply.
-     - Caching, optimistic UI only where safe; CSRF/session cookie vs bearer token model.
-
-   - **Integrations & async** — Webhooks, jobs, email, third-party libs — only if required by spec or screenshots.
-
-   - **Non-functional** — Security (authn/z, OWASP-relevant), performance (SLAs, N+1 avoidance), observability (logs, metrics, traces), backups for files + DB.
-
-5. **Design alignment** — For each major screen/area: what **screenshots** show vs **requirement.md**; gaps, conflicts, recommended resolution.
-
-6. **Traceability** — Table: Requirement ID or short name | Statement | Source (\`requirement.md\` heading and/or screenshot filename).
-
-7. **Assumptions & open questions** — Numbered; call out spec/design conflicts explicitly.
-
-**Density & style:** Use subheadings, bullet lists, and **many Markdown tables**. Avoid vague phrases like "handle appropriately" — specify behavior, limits, and failure modes. If the written spec is silent on a topic, state a **reasonable assumption** in section 7 rather than omitting the topic entirely.
-
-**Examples (tone, not content):**
-- Business rule table row: *Duplicate category name → block create → show validation on name field.*
-- API row: *GET /documents* | list | Bearer + role | filters: categoryId, q, deptId | 200 + pagination object | 403 if role cannot see dept.*`;
+Do not summarize. Do not truncate. Keep all relevant details explicit and testable.`;
 
 function extractFigmaFileKey(figmaInput = "") {
   const text = String(figmaInput || "").trim();
@@ -142,10 +86,6 @@ async function readTextFile(absPath) {
   }
 }
 
-function toPosixPath(p) {
-  return String(p).split(path.sep).join("/");
-}
-
 async function listImageFiles(dirPath) {
   try {
     const entries = await fs.readdir(dirPath, { withFileTypes: true });
@@ -158,99 +98,345 @@ async function listImageFiles(dirPath) {
   }
 }
 
-function buildFigmaApiLines(figmaInsight) {
-  const lines = [];
-  if (figmaInsight?.fileKey) {
-    lines.push(
-      `Optional Figma file key from link: ${figmaInsight.fileKey} — use if you open the file in Figma; screenshots remain the primary UI reference.`
-    );
-  }
-  if (figmaInsight?.hints?.length) {
-    lines.push(`Layer/page name hints: ${figmaInsight.hints.slice(0, 20).join(", ")}`);
-  }
-  if (figmaInsight?.error) {
-    lines.push(`Figma API unavailable (${figmaInsight.error}). Rely on screenshot folder + requirement.md.`);
-  }
-  return lines;
+const STOP_WORDS = new Set([
+  "the", "and", "for", "with", "that", "this", "from", "into", "must", "should", "would",
+  "can", "could", "will", "all", "any", "are", "is", "was", "were", "have", "has", "had",
+  "then", "when", "where", "what", "how", "who", "why", "your", "our", "their", "there",
+  "about", "after", "before", "while", "under", "over", "only", "each", "also", "more",
+  "need", "needed", "include", "including", "across", "within", "through", "using", "use",
+  "task", "feature", "module", "system", "user", "users", "story", "pbi"
+]);
+
+function extractKeywords(text = "") {
+  return String(text || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .split(/\s+/)
+    .map((w) => w.trim())
+    .filter((w) => w.length >= 3 && !STOP_WORDS.has(w));
 }
 
-function buildCodexSolutionPrompt({
-  featureName,
-  figmaInput,
-  requirementBody,
-  requirementDocDisplayPath,
-  figmaImagesDirDisplayPath,
-  imageFiles,
-  figmaInsight,
-}) {
-  const figmaLink = (figmaInput || "").trim();
-  const figmaApiLines = buildFigmaApiLines(figmaInsight);
+function parseRequirementSections(requirementBody = "") {
+  const lines = String(requirementBody || "").replace(/\r\n/g, "\n").split("\n");
+  const sections = [];
+  let current = null;
+  const isLikelyPlainHeading = (line = "", prevLine = "", nextLine = "") => {
+    const value = String(line || "").trim();
+    if (!value) return false;
+    if (value.length < 3 || value.length > 90) return false;
+    if (/^[#>*`\-\d]/.test(value)) return false;
+    if (/[.!?;:]$/.test(value)) return false;
+    if (!/[a-zA-Z]/.test(value)) return false;
+    if (value.split(/\s+/).length > 10) return false;
+    if (prevLine && prevLine.trim()) return false;
+    if (!nextLine || !nextLine.trim()) return false;
+    return true;
+  };
 
-  const imageNote =
-    imageFiles.length > 0
-      ? `Screenshots found (${imageFiles.length}): ${imageFiles.join(", ")}`
-      : "No image files found in this folder yet — add PNG/JPEG/WebP/GIF exports from Figma.";
+  const pushCurrent = () => {
+    if (!current) return;
+    const body = current.lines.join("\n").trim();
+    sections.push({
+      title: current.title.trim(),
+      body,
+    });
+  };
+
+  for (let idx = 0; idx < lines.length; idx += 1) {
+    const line = lines[idx];
+    const prevLine = idx > 0 ? lines[idx - 1] : "";
+    const nextLine = idx + 1 < lines.length ? lines[idx + 1] : "";
+    const headingMatch = line.match(/^#{1,6}\s+(.+)$/);
+    if (headingMatch) {
+      pushCurrent();
+      current = { title: headingMatch[1], lines: [] };
+      continue;
+    }
+    if (isLikelyPlainHeading(line, prevLine, nextLine)) {
+      pushCurrent();
+      current = { title: line.trim(), lines: [] };
+      continue;
+    }
+    if (!current) {
+      current = { title: "Feature Details", lines: [] };
+    }
+    current.lines.push(line);
+  }
+  pushCurrent();
+
+  return sections.filter((s) => s.title || s.body);
+}
+
+function scoreSectionForTask(section, keywords = []) {
+  if (!section || !keywords.length) return 0;
+  const title = String(section.title || "").toLowerCase();
+  const body = String(section.body || "").toLowerCase();
+
+  let score = 0;
+  for (const kw of keywords) {
+    if (title.includes(kw)) score += 5;
+    if (body.includes(kw)) score += 2;
+  }
+  return score;
+}
+
+function sectionPenalty(section) {
+  const title = String(section?.title || "").toLowerCase();
+  if (/^knowledge base|general experience|overview|introduction|feature details/.test(title)) {
+    return 3;
+  }
+  return 0;
+}
+
+function filterExtraInputForTask(extraText = "", keywords = []) {
+  const text = String(extraText || "").trim();
+  if (!text) return "";
+  if (!keywords.length) return text;
+
+  const sentences = splitSentences(text);
+  const relevant = sentences.filter((line) => {
+    const lower = line.toLowerCase();
+    return keywords.some((kw) => lower.includes(kw));
+  });
+
+  const picked = relevant.length ? relevant.slice(0, 12) : sentences.slice(0, 4);
+  return picked.join(" ");
+}
+
+function buildTaskScopedRequirementBody({ requirementFromFile = "", featureName = "", businessRequirements = "" }) {
+  const fileText = String(requirementFromFile || "").trim();
+  const extraText = String(businessRequirements || "").trim();
+  const titleKeywords = extractKeywords(featureName);
+  const fallbackKeywords = titleKeywords.length
+    ? titleKeywords
+    : extractKeywords(splitSentences(extraText).slice(0, 2).join(" "));
+  const keywords = fallbackKeywords;
+  const filteredExtraText = filterExtraInputForTask(extraText, keywords);
+  if (!fileText) {
+    const extraSections = parseRequirementSections(extraText);
+    if (!extraSections.length) return filteredExtraText;
+    const rankedExtra = extraSections
+      .map((section) => ({
+        section,
+        score: Math.max(0, scoreSectionForTask(section, keywords) - sectionPenalty(section)),
+      }))
+      .sort((a, b) => b.score - a.score);
+    const selectedExtra = rankedExtra
+      .filter((item) => item.score > 0)
+      .slice(0, 4)
+      .map((item) => item.section);
+    const finalExtra = (selectedExtra.length ? selectedExtra : rankedExtra.slice(0, 2).map((item) => item.section))
+      .map((section) => `## ${section.title}\n${section.body}`)
+      .join("\n\n")
+      .trim();
+    return finalExtra || filteredExtraText;
+  }
+
+  const sections = parseRequirementSections(fileText);
+  if (!sections.length) {
+    return filteredExtraText ? `${fileText}\n\n---\n\n### Additional Input\n\n${filteredExtraText}` : fileText;
+  }
+
+  const ranked = sections
+    .map((section) => ({
+      section,
+      score: Math.max(0, scoreSectionForTask(section, keywords) - sectionPenalty(section)),
+    }))
+    .sort((a, b) => b.score - a.score);
+
+  const bestScore = ranked[0]?.score || 0;
+  const threshold = bestScore > 0 ? Math.max(4, Math.floor(bestScore * 0.45)) : 0;
+
+  const matched = ranked
+    .filter((item) => item.score >= threshold && item.score > 0)
+    .slice(0, 4)
+    .map((item) => item.section);
+  const selectedSections = matched.length ? matched : ranked.slice(0, 2).map((item) => item.section);
+
+  const scopedFileContent = selectedSections
+    .map((section) => `## ${section.title}\n${section.body}`)
+    .join("\n\n")
+    .trim();
+
+  if (scopedFileContent && filteredExtraText) {
+    return `${scopedFileContent}\n\n---\n\n### Additional Input\n\n${filteredExtraText}`;
+  }
+  return scopedFileContent || filteredExtraText;
+}
+
+function splitSentences(text = "") {
+  return String(text || "")
+    .replace(/\r\n/g, "\n")
+    .replace(/\s+/g, " ")
+    .split(/(?<=[.!?])\s+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+function collectRequirementStatements(sections = []) {
+  const statements = [];
+
+  for (const section of sections) {
+    const lines = String(section.body || "")
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean);
+
+    for (const line of lines) {
+      const normalizedLine = line.replace(/^[-*]\s+/, "").replace(/^\d+\.\s+/, "").trim();
+      if (!normalizedLine) continue;
+
+      const sentenceCandidates = splitSentences(normalizedLine);
+      if (sentenceCandidates.length > 1) {
+        statements.push(...sentenceCandidates);
+      } else {
+        statements.push(normalizedLine);
+      }
+    }
+  }
+
+  const unique = [];
+  const seen = new Set();
+  for (const stmt of statements) {
+    const key = stmt.toLowerCase();
+    if (!seen.has(key)) {
+      seen.add(key);
+      unique.push(stmt);
+    }
+  }
+  return unique;
+}
+
+function inferBusinessValue(sections = [], statements = []) {
+  const businessSignals = statements.filter((line) =>
+    /(enable|improve|reduce|increase|streamline|standardize|secure|compliance|visibility|productivity|efficien)/i.test(
+      line
+    )
+  );
+
+  if (!businessSignals.length) {
+    return "- Business value is derived from delivering the requested capabilities with explicit, testable behavior.";
+  }
+
+  return businessSignals
+    .slice(0, 5)
+    .map((line) => `- ${line}`)
+    .join("\n");
+}
+
+function buildScopeSection(sections = [], statements = []) {
+  const inScopeTitles = sections.map((s) => s.title).filter(Boolean);
+  const outOfScopeLines = statements.filter((line) =>
+    /(out of scope|not in scope|does not include|exclude|must not|cannot)/i.test(line)
+  );
+
+  const inScope = inScopeTitles.length
+    ? inScopeTitles.map((title) => `- ${title}`).join("\n")
+    : "- Core feature implementation requested by the input.";
+  const outOfScope = outOfScopeLines.length
+    ? outOfScopeLines.slice(0, 5).map((line) => `- ${line}`).join("\n")
+    : "- Any behavior, integration, or workflow not explicitly defined in the functional requirements.";
+
+  return `## Scope\n\n**In Scope**\n${inScope}\n\n**Out of Scope**\n${outOfScope}`;
+}
+
+function buildFunctionalRequirements(statements = []) {
+  const candidateStatements = statements.filter((line) =>
+    /(must|should|shall|required|can|cannot|only|support|allow|validate|display|show|create|update|delete|assign|filter|search|sort|upload|download|redirect)/i.test(
+      line
+    )
+  );
+
+  const picked = (candidateStatements.length ? candidateStatements : statements).slice(0, 40);
+  if (!picked.length) {
+    return "- The system must implement the feature behavior described by the provided input.";
+  }
+
+  return picked
+    .map((line) => `- ${line}`)
+    .join("\n\n");
+}
+
+function buildNonFunctionalRequirements(statements = []) {
+  const picked = statements.filter((line) =>
+    /(security|session|token|performance|responsive|upload|size|limit|server side|server-side|validation|pagination|error message|api|audit|access control)/i.test(
+      line
+    )
+  );
+
+  if (!picked.length) {
+    return "- No explicit non-functional constraints were found in the provided input.";
+  }
+
+  return picked
+    .slice(0, 25)
+    .map((line) => `- ${line}`)
+    .join("\n");
+}
+
+function inferActor(statement = "") {
+  if (/admin/i.test(statement)) return "an Admin user";
+  if (/normal user|end user|reader/i.test(statement)) return "a Normal User";
+  return "an authenticated user";
+}
+
+function buildAcceptanceCriteria(statements = []) {
+  const candidates = statements.filter((line) =>
+    /(must|should|shall|required|can|cannot|only|support|allow|validate|display|show|create|update|delete|assign|filter|search|sort|upload|download|redirect)/i.test(
+      line
+    )
+  );
+  const source = (candidates.length ? candidates : statements).slice(0, 25);
+
+  if (!source.length) {
+    return "- Given an authenticated user, when they perform the core workflow, then the system processes the request successfully and returns expected results.";
+  }
+
+  return source
+    .map((statement) => {
+      const actor = inferActor(statement);
+      return `- Given ${actor}, when ${statement.charAt(0).toLowerCase()}${statement.slice(
+        1
+      )}, then the system enforces the behavior exactly as specified.`;
+    })
+    .join("\n");
+}
+
+function buildAdoWorkItemDescription({ requirementBody, figmaInsight }) {
+  const sections = parseRequirementSections(requirementBody);
+  const statements = collectRequirementStatements(sections);
+  const descriptionSections = sections
+    .map((section) => `#### ${section.title}\n${section.body || "- No additional details provided."}`)
+    .join("\n\n");
+  const figmaContext = figmaInsight?.hints?.length
+    ? `\n\n#### Design Context\n- Relevant design cues: ${figmaInsight.hints.slice(0, 20).join(", ")}`
+    : "";
 
   const lines = [
-    `Feature: ${featureName}`,
+    (descriptionSections || "Detailed implementation content was not provided.") + figmaContext,
     "",
-    "You have two inputs to combine:",
-    `1) **Written requirements** — file path: \`${requirementDocDisplayPath}\` (content below).`,
-    `2) **Figma design exports** — study every image in folder: \`${figmaImagesDirDisplayPath}\`. ${imageNote}`,
+    "## Business Value",
+    inferBusinessValue(sections, statements),
     "",
-    "Produce **feature-based Markdown files** in one folder (not a single combined file).",
+    buildScopeSection(sections, statements),
     "",
-    "Output packaging (mandatory):",
-    "- Create folder: `./solution-requirements/` (relative to the current working directory where Codex is running).",
-    "- Create one file per major feature/module discovered from the requirements + screenshots.",
-    "- File naming: kebab-case, e.g. `auth-login.md`, `category-management.md`, `policy-listing.md`, `policy-create-flow.md`, `access-control.md`.",
-    "- Also create `./solution-requirements/index.md` with a table of contents: Feature | File | Scope summary.",
-    "- Avoid duplication: if a rule is shared across features, keep canonical detail in one file and link to it from others.",
-    "- Every feature file must still follow the standard section format below.",
+    "## Functional Requirements",
+    buildFunctionalRequirements(statements),
     "",
-    "Write behavior (mandatory to avoid shell/OS output limits):",
-    "- Generate and write files **incrementally**: complete one feature file, write it to disk immediately, then continue to the next file.",
-    "- Do **not** build all file contents in memory and write everything at the end.",
-    "- Update `./solution-requirements/index.md` after each new feature file is written.",
-    "- If generation is interrupted, already-written files must remain usable.",
-    "",
-    "Content goals for each feature file:",
-    "- **Full-stack technical depth**: backend (API + domain rules + persistence), database **schema with tables/columns/constraints/indexes**, file/storage behavior, and frontend (routes, role-gated UI, validation split client/server).",
-    "- **Business logic**: every authorization rule, visibility rule, validation, and lifecycle transition spelled out; use **tables** for matrices (actors × actions, screens × rules, API summary, cross-field rules).",
-    "- **Tabular layout**: use Markdown tables anywhere they improve clarity (not only in Traceability). Narrative bullets alone are insufficient for sections 3–4.",
-    "- Merge **written spec + screenshots**; where they conflict, document both and add an explicit resolution or open question in Assumptions.",
-    "- Include database impact for that feature (tables touched, columns, constraints, indexes). If a shared schema spans features, split ownership clearly and cross-link.",
-    "- Include API endpoints per feature and identify dependencies on other feature files.",
-    "",
-    STANDARD_OUTPUT_FORMAT,
-    "",
-    "---",
-    "",
-    "### Optional Figma link (extra context)",
-    figmaLink || "(Not provided.)",
+    "## Non-Functional Requirements",
+    buildNonFunctionalRequirements(statements),
   ];
-  for (const line of figmaApiLines) {
-    if (line) lines.push(line);
-  }
-  lines.push(
-    "",
-    "---",
-    "",
-    "### Written requirements (`requirement.md` and any pasted additions)",
-    requirementBody
-  );
+
   return lines.join("\n");
 }
 
-async function mergeRequirementText(absDocPath, businessRequirements) {
+async function mergeRequirementText(absDocPath, featureName, businessRequirements) {
   const fromFile = await readTextFile(absDocPath);
-  const extra = String(businessRequirements || "").trim();
-  if (fromFile && extra) {
-    return `${fromFile}\n\n---\n\n### Additional notes (from tool)\n\n${extra}`;
-  }
-  if (fromFile) return fromFile;
-  if (extra) return extra;
-  return "";
+  return buildTaskScopedRequirementBody({
+    requirementFromFile: fromFile,
+    featureName,
+    businessRequirements,
+  });
 }
 
 export class SolutionRequirementsAgent {
@@ -260,7 +446,7 @@ export class SolutionRequirementsAgent {
   }
 
   /**
-   * Builds a Codex prompt from ./requirement.md + ./figma screenshots + optional Figma link.
+   * Builds complete work item content from merged project requirements and optional Figma context.
    */
   async generateDocs({
     featureName,
@@ -275,29 +461,34 @@ export class SolutionRequirementsAgent {
     const requirementAbs = path.join(base, requirementDocPath);
     const figmaImagesAbs = path.join(base, figmaImagesDir);
 
-    const requirementBody = await mergeRequirementText(requirementAbs, businessRequirements);
+    const requirementBody = await mergeRequirementText(
+      requirementAbs,
+      safeFeature,
+      businessRequirements
+    );
     const resolvedBody =
       requirementBody.trim() ||
-      "(No requirement text yet: add content to requirement.md and/or pass businessRequirements.)";
+      "(No requirement text was provided. Include requirement details in the request.)";
 
     const imageFiles = await listImageFiles(figmaImagesAbs);
     const figmaInsight = await collectFigmaUiHints(figmaInput);
 
-    const codexPrompt = buildCodexSolutionPrompt({
-      featureName: safeFeature,
-      figmaInput,
+    const workItemDescription = buildAdoWorkItemDescription({
       requirementBody: resolvedBody,
-      requirementDocDisplayPath: toPosixPath(path.relative(base, requirementAbs) || requirementDocPath),
-      figmaImagesDirDisplayPath: toPosixPath(path.relative(base, figmaImagesAbs) || figmaImagesDir),
-      imageFiles,
       figmaInsight,
     });
+    const acceptanceCriteria = buildAcceptanceCriteria(
+      collectRequirementStatements(parseRequirementSections(resolvedBody))
+    );
 
     return {
       agent: this.name,
       role: this.role,
       featureName: safeFeature,
-      codexPrompt,
+      workItemTitle: safeFeature,
+      codexPrompt: workItemDescription,
+      workItemDescription,
+      acceptanceCriteria,
       sources: {
         requirementFile: requirementAbs,
         figmaImagesDir: figmaImagesAbs,
@@ -309,8 +500,8 @@ export class SolutionRequirementsAgent {
         analyzedNodes: figmaInsight.hints.length,
         warning: figmaInsight.error || null,
       },
-      note:
-        "Paste codexPrompt into Codex. It uses requirement.md + Figma screenshot folder. Expected output: feature-based docs inside ./solution-requirements/ (with index.md) at Codex current working directory, written incrementally file-by-file (not all at once), plus full-stack technical requirements per feature including Markdown tables, DB schema impact, API contracts, and explicit business/authorization logic.",
+      note: "Generated complete, structured work item content from the provided feature inputs.",
+      workItemFlowNote: WORK_ITEM_OUTPUT_FORMAT,
     };
   }
 }

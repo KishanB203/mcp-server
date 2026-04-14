@@ -100,21 +100,15 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         return text(formatWorkItemList(await listWorkItems(args)));
 
       case "ado_create_work_item": {
-        const requestedType = String(args.type ?? "Task").toLowerCase();
-        const isBacklogType =
-          requestedType === "task" ||
-          requestedType === "user story" ||
-          requestedType === "product backlog item";
-        if (isBacklogType) {
-          throw new Error(
-            "Direct backlog creation is blocked. Run `agent_generate_solution_requirements` first so requirements are converted before creating User Story/Task items."
-          );
-        }
+        // Always generate requirements first (handled in ticketAgent.createTicket)
         const item = await ticketAgent.createTicket(args);
         return text(
           `Work item created:\n` +
           `**#${item.id}** — ${item.title}\n` +
           `**Type:** ${item.type} | **State:** ${item.state ?? "N/A"}\n` +
+          (typeof item.subtaskCount === "number"
+            ? `**Subtasks created:** ${item.subtaskCount}\n`
+            : "") +
           `**URL:** ${item.url}`
         );
       }
@@ -273,11 +267,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           `**Figma screenshots folder:** \`${src.figmaImagesDir}\` (${src.imageFileCount} image(s))`,
         ].join("\n");
         return text(
-          `# SolutionRequirementsAgent — Codex prompt\n\n` +
+          `# SolutionRequirementsAgent — Work item content\n\n` +
           `**Feature:** ${r.featureName}\n` +
           `${sourceLines}\n` +
           (figmaMeta ? `\n${figmaMeta}\n` : "") +
-          `\n${r.note}\n\n---\n\n${r.codexPrompt}`
+          `\n${r.workItemFlowNote}\n\n---\n\n${r.workItemDescription}`
         );
       } 
 

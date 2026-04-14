@@ -274,9 +274,8 @@ export const TOOLS = [
   {
     name: "agent_generate_solution_requirements",
     description:
-      "SolutionRequirementsAgent: Returns a Codex prompt that combines requirement.md with Figma " +
-      "screenshots (figma folder by default) to produce feature-based full-stack business + technical docs " +
-      "written incrementally file-by-file.",
+      "SolutionRequirementsAgent: Returns complete, structured Azure DevOps work item content " +
+      "from project requirements and optional Figma screenshots, including detailed acceptance criteria.",
     inputSchema: {
       type: "object",
       properties: {
