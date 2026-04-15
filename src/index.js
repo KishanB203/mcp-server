@@ -28,7 +28,6 @@ import fs from "fs";
 // Config — must be imported before any infrastructure module so that dotenv
 // is loaded and process.env is populated before clients are instantiated.
 import {
-  validateAdoConfig,
   DEFAULT_AREA_PATH,
   DEFAULT_SPRINT_PATH,
   DEFAULT_BACKLOG_TAGS,
@@ -69,6 +68,14 @@ import { reviewAgent } from "./agents/reviewAgent.js";
 
 // Services
 import { runWorkflow } from "./services/workflow.js";
+import {
+  listMcpDocFiles,
+  loadMcpDocsMarkdown,
+} from "./services/mcp-docs.js";
+import {
+  loadProjectRulesMarkdown,
+  listProjectRuleMarkdownFiles,
+} from "./services/project-rules.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // MCP Server
@@ -82,6 +89,69 @@ const server = new Server(
 // ── List tools ────────────────────────────────────────────────────────────────
 
 server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }));
+
+const formatProjectRulesDevAppendix = (projectRules) => {
+  if (!projectRules) return "";
+  const files = projectRules.files ?? [];
+  const fileLine = files.length
+    ? files.map((f) => `\`${f}\``).join(", ")
+    : "_(add `*.md` under `rules/`)_";
+  const md = String(projectRules.markdown || "").trim();
+  if (!md) {
+    return (
+      `\n\n---\n\n## Project rules (\`rules/\`)\n` +
+      `**Files:** ${fileLine}\n` +
+      `_No markdown content yet — add standards as \`.md\` files._`
+    );
+  }
+  return (
+    `\n\n---\n\n## Project rules (\`rules/\`) — follow while implementing\n` +
+    `**Files:** ${fileLine}\n\n` +
+    `\`\`\`markdown\n${md}\n\`\`\``
+  );
+};
+
+const formatMcpDocsAppendix = (projectDir) => {
+  const files = listMcpDocFiles({ projectDir });
+  const md = loadMcpDocsMarkdown({ projectDir }).trim();
+
+  if (!files.length && !md) {
+    return "";
+  }
+
+  if (!md) {
+    return (
+      `\n\n---\n\n## MCP docs (\`mcp_docs/\`)` +
+      `\n**Files:** ${files.map((f) => `\`${f}\``).join(", ")}`
+    );
+  }
+
+  return (
+    `\n\n---\n\n## MCP docs (\`mcp_docs/\`) — auto-loaded` +
+    `\n**Files:** ${files.length ? files.map((f) => `\`${f}\``).join(", ") : "_(none)_"}\n\n` +
+    `\`\`\`markdown\n${md}\n\`\`\``
+  );
+};
+
+const formatPrePrSuccessAppendix = (validation) => {
+  if (!validation) return "";
+  const ar = validation.automatedReviewPreview;
+  if (!ar) return "";
+  const status = ar.issues.length === 0 ? "APPROVED (no blocking review issues)" : "CHANGES REQUESTED";
+  const lines = [
+    `\n\n---\n\n## Pre-PR automated review (same checks as ReviewerAgent)`,
+    `**Status:** ${status}`,
+  ];
+  if (ar.issues.length) lines.push(`**Issues:** ${ar.issues.join("; ")}`);
+  if (ar.warnings.length) lines.push(`**Warnings:** ${ar.warnings.join("; ")}`);
+  if (validation.ruleFiles?.length) {
+    lines.push(`**Rules considered:** ${validation.ruleFiles.map((f) => `\`${f}\``).join(", ")}`);
+  }
+  if (validation.mcpDocFiles?.length) {
+    lines.push(`**MCP docs considered:** ${validation.mcpDocFiles.map((f) => `\`${f}\``).join(", ")}`);
+  }
+  return lines.join("\n");
+};
 
 // ── Call tool ─────────────────────────────────────────────────────────────────
 
@@ -166,7 +236,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case "conflict_preflight_check": {
-        const r = preflightCheck(args.taskId, args.branchName);
+        const r = preflightCheck(args.taskId, args.branchName, {
+          projectDir: args.projectDir,
+        });
         const lines = [
           `# Preflight Check`,
           `**Proceed:** ${r.canProceed ? "Yes" : "Conflicts detected"}`,
@@ -175,6 +247,23 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         if (r.existingBranch) lines.push(`**Existing branch:** \`${r.existingBranch}\``);
         if (r.existingPR) lines.push(`**Existing PR:** #${r.existingPR.number}`);
         return text(lines.join("\n"));
+      }
+
+      case "project_get_rules": {
+        const projectDir = args.projectDir;
+        const files = listProjectRuleMarkdownFiles({ projectDir });
+        const md = loadProjectRulesMarkdown({ projectDir });
+        const mcpFiles = listMcpDocFiles({ projectDir });
+        const mcpMd = loadMcpDocsMarkdown({ projectDir });
+        return text(
+          `# Project rules — \`rules/\`\n\n` +
+            `**Files (${files.length}):** ${files.length ? files.map((f) => `\`${f}\``).join(", ") : "_(none)_"}\n\n` +
+            `---\n\n` +
+            (md.trim() || "_No markdown content in `rules/`._") +
+            `\n\n---\n\n# MCP docs — \`mcp_docs/\`\n\n` +
+            `**Files (${mcpFiles.length}):** ${mcpFiles.length ? mcpFiles.map((f) => `\`${f}\``).join(", ") : "_(none)_"}\n\n` +
+            (mcpMd.trim() || "_No markdown content in `mcp_docs/`._")
+        );
       }
 
       // ── Agents ────────────────────────────────────────────────────────────
@@ -196,41 +285,69 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       case "agent_generate_architecture": {
         const r = codeAgent.generateArchitecture(args.featureName, args.rootDir);
+        const projectDir = args.rootDir;
         return text(
           `# ArchitectAgent — Scaffold: ${r.featureName}\n\n` +
           `**Files created (${r.structure.files.length}):**\n` +
-          r.structure.files.map((f) => `- \`${f.path}\``).join("\n")
+          r.structure.files.map((f) => `- \`${f.path}\``).join("\n") +
+            formatProjectRulesDevAppendix(r.projectRules) +
+            formatMcpDocsAppendix(projectDir)
         );
       }
 
       case "agent_start_development": {
         const task = await getWorkItem(args.taskId);
-        const r = await developerAgent.workOnTask(task, { force: args.force });
+        const projectDir = args.projectDir;
+        const r = await developerAgent.workOnTask(task, {
+          force: args.force,
+          projectDir,
+        });
         return text(
           `# DeveloperAgent — ${r.success ? "Ready" : "Blocked"}\n\n` +
           r.log.join("\n") +
-          (r.warning ? `\n\n${r.warning}` : "")
+          (r.warning ? `\n\n${r.warning}` : "") +
+            formatProjectRulesDevAppendix(r.projectRules) +
+            formatMcpDocsAppendix(projectDir)
         );
       }
 
       case "agent_create_pr": {
         const task = await getWorkItem(args.taskId);
+        const projectDir = args.projectDir;
         const r = await prAgent.createPullRequest(task, args.branchName, {
           figmaUrl: args.figmaUrl,
           summary: args.summary,
+          projectDir,
         });
+        if (!r.success) {
+          const v = r.validation;
+          const extra =
+            v?.automatedReviewPreview && v.automatedReviewPreview.issues.length === 0
+              ? `\n\n_(Automated review preview would not block on the same diff — fix gate issues above first.)_`
+              : "";
+          return text(
+            `${r.error}\n\n**Gate issues:** ${v?.issues?.join("; ") ?? "n/a"}\n` +
+              `**Rule files:** ${v?.ruleFiles?.length ? v.ruleFiles.map((f) => `\`${f}\``).join(", ") : "none"}` +
+              `\n**MCP docs files:** ${v?.mcpDocFiles?.length ? v.mcpDocFiles.map((f) => `\`${f}\``).join(", ") : "none"}` +
+              extra
+          );
+        }
         return text(
-          r.success
-            ? `PR: ${r.prUrl}\n**Title:** ${r.title}`
-            : `${r.error}`
+          `PR: ${r.prUrl}\n**Title:** ${r.title}` +
+            formatPrePrSuccessAppendix(r.validation) +
+            formatMcpDocsAppendix(projectDir)
         );
       }
 
       case "agent_review_pr": {
-        const r = await reviewAgent.reviewPullRequest(args.prNumber, args.branchName);
+        const projectDir = args.projectDir;
+        const r = await reviewAgent.reviewPullRequest(args.prNumber, args.branchName, {
+          projectDir,
+        });
         return text(
           r.reviewBody +
-          `\n\n**Posted:** ${r.posted ? "Yes" : "No (gh CLI required)"}`
+          `\n\n**Posted:** ${r.posted ? "Yes" : "No (gh CLI required)"}` +
+          formatMcpDocsAppendix(projectDir)
         );
       }
 
@@ -277,6 +394,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       case "agent_full_workflow": {
         const result = await runWorkflow(args.taskId, {
+          projectDir: args.projectDir,
           skipFigma: args.skipFigma,
           skipArch: args.skipArch,
           force: args.force,
@@ -389,7 +507,12 @@ const formatWorkItemList = (items) => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 async function main() {
-  validateAdoConfig();
+  const startupMcpDocFiles = listMcpDocFiles();
+  if (startupMcpDocFiles.length > 0) {
+    process.stderr.write(
+      `Loaded mcp_docs context (${startupMcpDocFiles.length} file(s)): ${startupMcpDocFiles.join(", ")}\n`
+    );
+  }
   const transport = new StdioServerTransport();
   await server.connect(transport);
   process.stderr.write(

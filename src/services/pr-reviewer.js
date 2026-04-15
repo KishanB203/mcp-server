@@ -15,27 +15,15 @@
  *   - Large change sets (warning)
  */
 
-import fs from "fs";
-import path from "path";
 import { execSync } from "child_process";
 import { createGitHubClient } from "../infrastructure/github-client.js";
+import { analyzeDiffStatic } from "./diff-static-analysis.js";
+import { loadMcpDocsMarkdown } from "./mcp-docs.js";
+import { loadProjectRulesMarkdown } from "./project-rules.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Git helpers
 // ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * Detects the git repository root.  Falls back to `process.cwd()`.
- *
- * @returns {string}
- */
-const getRepoRoot = () => {
-  try {
-    return execSync("git rev-parse --show-toplevel", { encoding: "utf8" }).trim();
-  } catch {
-    return process.cwd();
-  }
-}
 
 /**
  * Returns the unified diff between two branches.
@@ -43,13 +31,15 @@ const getRepoRoot = () => {
  *
  * @param {string} baseBranch
  * @param {string} headBranch
+ * @param {{ projectDir?: string }} [options]
  * @returns {string}
  */
-const getDiff = (baseBranch, headBranch) => {
+const getDiff = (baseBranch, headBranch, options = {}) => {
   try {
     return execSync(`git diff ${baseBranch}...${headBranch}`, {
       encoding: "utf8",
       maxBuffer: 20 * 1024 * 1024,
+      cwd: options.projectDir,
     });
   } catch {
     return "";
@@ -61,117 +51,19 @@ const getDiff = (baseBranch, headBranch) => {
  *
  * @param {string} baseBranch
  * @param {string} headBranch
+ * @param {{ projectDir?: string }} [options]
  * @returns {string[]}
  */
-const getChangedFiles = (baseBranch, headBranch) => {
+const getChangedFiles = (baseBranch, headBranch, options = {}) => {
   try {
     const out = execSync(
       `git diff --name-only ${baseBranch}...${headBranch}`,
-      { encoding: "utf8" }
+      { encoding: "utf8", cwd: options.projectDir }
     ).trim();
     return out ? out.split("\n").filter(Boolean) : [];
   } catch {
     return [];
   }
-}
-
-/**
- * Safely reads a text file; returns an empty string on error.
- *
- * @param {string} filePath
- * @returns {string}
- */
-const readFile = (filePath) => {
-  try {
-    return fs.readFileSync(filePath, "utf8");
-  } catch {
-    return "";
-  }
-}
-
-/**
- * Loads all markdown rule files from the rules directory.
- *
- * @param {string} rulesDir
- * @returns {string}
- */
-const loadRules = (rulesDir) => {
-  try {
-    return fs
-      .readdirSync(rulesDir, { withFileTypes: true })
-      .filter((entry) => entry.isFile() && entry.name.toLowerCase().endsWith(".md"))
-      .map((entry) => entry.name)
-      .sort()
-      .map((fileName) => {
-        const content = readFile(path.join(rulesDir, fileName)).trim();
-        return content ? `# ${fileName}\n\n${content}` : "";
-      })
-      .filter(Boolean)
-      .join("\n\n");
-  } catch {
-    return "";
-  }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Static analysis
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * Runs all static checks against the diff and changed file list.
- *
- * @param {string}   diff
- * @param {string[]} changedFiles
- * @returns {{ issues: string[], warnings: string[], passed: string[] }}
- */
-const analyze = (diff, changedFiles) => {
-  const issues = [];
-  const warnings = [];
-  const passed = [];
-
-  // ── Change-set size ──────────────────────────────────────────────────────
-  const addedLines = (diff.match(/^\+(?!\+\+).*/gm) ?? []).length;
-  if (addedLines > 1200) {
-    warnings.push(`Large change set: ${addedLines} lines added — consider splitting`);
-  }
-
-  // ── TODO / FIXME markers ─────────────────────────────────────────────────
-  const todoCount = (diff.match(/^\+.*\b(TODO|FIXME|HACK|XXX)\b/gm) ?? []).length;
-  if (todoCount > 0) {
-    issues.push(`TODO/FIXME present: ${todoCount} occurrence(s) — address or track in ADO`);
-  } else {
-    passed.push("No TODO/FIXME markers");
-  }
-
-  // ── console.log ───────────────────────────────────────────────────────────
-  const consoleCount = (diff.match(/^\+.*\bconsole\.log\b/gm) ?? []).length;
-  if (consoleCount > 0) {
-    warnings.push(`console.log present: ${consoleCount} occurrence(s) — remove before merge`);
-  } else {
-    passed.push("No console.log in additions");
-  }
-
-  // ── Possible hardcoded secrets ────────────────────────────────────────────
-  const secretPatterns = [
-    /^\+.*(api[_-]?key|secret|password|token)\s*[:=]\s*["'][^"']{8,}["']/im,
-    /^\+.*BEGIN (RSA|OPENSSH|EC) PRIVATE KEY/im,
-  ];
-  if (secretPatterns.some((p) => p.test(diff))) {
-    issues.push("Possible hardcoded secret detected — use environment variables");
-  } else {
-    passed.push("No obvious hardcoded secrets");
-  }
-
-  // ── Test file coverage ────────────────────────────────────────────────────
-  const srcFiles = changedFiles.filter((f) => /\.(js|jsx|ts|tsx)$/.test(f));
-  const testFiles = changedFiles.filter((f) => /\.(test|spec)\./.test(f));
-  if (srcFiles.length > 0 && testFiles.length === 0) {
-    warnings.push("No test files detected in change set — add tests before merge");
-  } else if (testFiles.length > 0) {
-    passed.push(`Tests included: ${testFiles.length} file(s)`);
-  }
-
-  return { issues, warnings, passed };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -181,7 +73,7 @@ const analyze = (diff, changedFiles) => {
 /**
  * Renders a Markdown review comment from the analysis result.
  *
- * @param {{ prNumber:number, baseBranch:string, headBranch:string, changedFiles:string[], rules:string, analysis:object }} params
+ * @param {{ prNumber:number, baseBranch:string, headBranch:string, changedFiles:string[], rules:string, mcpDocs:string, analysis:object }} params
  * @returns {string}
  */
 const renderComment = ({
@@ -190,6 +82,7 @@ const renderComment = ({
   headBranch,
   changedFiles,
   rules,
+  mcpDocs,
   analysis,
 }) => {
   const status = analysis.issues.length === 0 ? "APPROVED" : "CHANGES REQUESTED";
@@ -209,7 +102,17 @@ const renderComment = ({
     lines.push(
       "### Rules considered",
       "```",
-      rules.trim().slice(0, 2000),
+      rules.trim(),
+      "```",
+      ""
+    );
+  }
+
+  if (mcpDocs.trim()) {
+    lines.push(
+      "### MCP docs considered",
+      "```",
+      mcpDocs.trim(),
       "```",
       ""
     );
@@ -238,7 +141,7 @@ export class PRReviewer {
    *   3. Run static analysis
    *   4. Post review comment to GitHub PR
    *
-   * @param {{ repo: {owner:string,name:string}, prNumber: number, baseBranch?: string, headBranch: string }} params
+   * @param {{ repo: {owner:string,name:string}, prNumber: number, baseBranch?: string, headBranch: string, projectDir?: string }} params
    * @returns {Promise<ReviewResult>}
    *
    * @typedef {object} ReviewResult
@@ -248,18 +151,20 @@ export class PRReviewer {
    * @property {object}   posted      GitHub comment object
    * @property {string}   comment     Rendered review comment (Markdown)
    */
-  async reviewPR({ repo, prNumber, baseBranch = "main", headBranch }) {
+  async reviewPR({ repo, prNumber, baseBranch = "main", headBranch, projectDir }) {
     if (!prNumber) throw new Error("prNumber is required");
     if (!headBranch) throw new Error("headBranch is required");
 
-    const repoRoot = getRepoRoot();
-    const rulesDir = path.join(repoRoot, "rules");
-    // Load all project rule files so new standards are picked up automatically.
-    const rules = loadRules(rulesDir);
+    // Load all `rules/*.md` from the git root so new standards are picked up automatically.
+    const rules = loadProjectRulesMarkdown({ projectDir });
+    const mcpDocs = loadMcpDocsMarkdown({ projectDir });
 
-    const diff = getDiff(baseBranch, headBranch);
-    const changedFiles = getChangedFiles(baseBranch, headBranch);
-    const analysisResult = analyze(diff, changedFiles);
+    const diff = getDiff(baseBranch, headBranch, { projectDir });
+    const changedFiles = getChangedFiles(baseBranch, headBranch, { projectDir });
+    const analysisResult = analyzeDiffStatic(diff, changedFiles, {
+      consoleAsIssue: false,
+      trackLargeChangeSet: true,
+    });
 
     const comment = renderComment({
       prNumber,
@@ -267,6 +172,7 @@ export class PRReviewer {
       headBranch,
       changedFiles,
       rules,
+      mcpDocs,
       analysis: analysisResult,
     });
 

@@ -12,10 +12,41 @@
  */
 
 import dotenv from "dotenv";
+import fs from "fs";
+import path from "path";
 import { fileURLToPath } from "url";
 
-// Resolve the project-root .env regardless of how deep this file is nested.
-dotenv.config({ path: fileURLToPath(new URL("../../.env", import.meta.url)) });
+// Resolve project root regardless of how deep this file is nested.
+const PROJECT_ROOT = fileURLToPath(new URL("../../", import.meta.url));
+
+// Load env files only from `mcp_docs/`.
+const MCP_DOCS_DIR = path.join(PROJECT_ROOT, "mcp_docs");
+const ENV_FILE_PATTERN = /^\.env(?:\..+)?$/i;
+
+const loadMcpDocsEnv = () => {
+  try {
+    const files = fs
+      .readdirSync(MCP_DOCS_DIR, { withFileTypes: true })
+      .filter((entry) => entry.isFile())
+      .map((entry) => entry.name)
+      .filter((name) => ENV_FILE_PATTERN.test(name) && !/\.bak$/i.test(name))
+      .sort();
+
+    for (const fileName of files) {
+      const fullPath = path.join(MCP_DOCS_DIR, fileName);
+      const raw = fs.readFileSync(fullPath, "utf8");
+      const parsed = dotenv.parse(raw);
+      for (const [key, value] of Object.entries(parsed)) {
+        // `mcp_docs/.env*` is the final source when present.
+        process.env[key] = String(value);
+      }
+    }
+  } catch {
+    // Non-fatal: mcp_docs env is optional.
+  }
+};
+
+loadMcpDocsEnv();
 
 // ── Azure DevOps ──────────────────────────────────────────────────────────────
 

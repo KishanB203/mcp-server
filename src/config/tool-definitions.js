@@ -162,8 +162,30 @@ export const TOOLS = [
       properties: {
         taskId: { type: "number" },
         branchName: { type: "string" },
+        projectDir: {
+          type: "string",
+          description: "Target project directory (git repo where branches/PRs are managed)",
+        },
       },
       required: ["taskId", "branchName"],
+    },
+  },
+
+  {
+    name: "project_get_rules",
+    description:
+      "Loads project guidance from `rules/`, `mcp_docs/`, and `.env*` keys in `mcp_docs/`. " +
+      "Use during development and before coding so behavior matches pre-PR validation and PR review. " +
+      "Adding or editing files under those folders takes effect automatically — no config changes.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectDir: {
+          type: "string",
+          description: "Target project directory containing the `rules/` folder",
+        },
+      },
+      required: [],
     },
   },
 
@@ -186,7 +208,8 @@ export const TOOLS = [
     name: "agent_generate_architecture",
     description:
       "ArchitectAgent: Scaffolds a clean architecture for a feature: " +
-      "domain entities, repository interfaces, use cases, DTOs, React components, and test stubs.",
+      "domain entities, repository interfaces, use cases, DTOs, React components, and test stubs. " +
+      "Returns the current `rules/*.md` standards so implementation matches pre-PR checks.",
     inputSchema: {
       type: "object",
       properties: {
@@ -206,11 +229,16 @@ export const TOOLS = [
     name: "agent_start_development",
     description:
       "DeveloperAgent: Runs conflict preflight, creates the feature branch " +
-      "(feature/{id}-{name}), and marks the ADO task as 'In Progress'.",
+      "(feature/{id}-{name}), marks the ADO task as 'In Progress', and returns all `rules/*.md` " +
+      "content so coding follows the same standards enforced before PR creation.",
     inputSchema: {
       type: "object",
       properties: {
         taskId: { type: "number" },
+        projectDir: {
+          type: "string",
+          description: "Target project directory containing source and `rules/`",
+        },
         force: {
           type: "boolean",
           description: "Override conflict detection (proceed even if branch/PR exists)",
@@ -222,13 +250,18 @@ export const TOOLS = [
   {
     name: "agent_create_pr",
     description:
-      "DeveloperAgent: Creates a GitHub PR using the standard PR template " +
-      "and posts the PR link back to the ADO task.",
+      "DeveloperAgent: Runs pre-PR checks (diff gates + `rules/` snapshot) then creates a GitHub PR " +
+      "with the standard template and posts the PR link on the ADO task. " +
+      "Fails if the same blocking issues ReviewerAgent would report are present.",
     inputSchema: {
       type: "object",
       properties: {
         taskId: { type: "number" },
         branchName: { type: "string" },
+        projectDir: {
+          type: "string",
+          description: "Target project directory for git diff and `rules/` validation",
+        },
         figmaUrl: { type: "string", description: "Optional Figma design URL" },
         summary: { type: "string", description: "Optional PR summary override" },
       },
@@ -246,6 +279,10 @@ export const TOOLS = [
       properties: {
         prNumber: { type: "number" },
         branchName: { type: "string" },
+        projectDir: {
+          type: "string",
+          description: "Target project directory for git diff and `rules/` loading",
+        },
       },
       required: ["prNumber", "branchName"],
     },
@@ -312,6 +349,10 @@ export const TOOLS = [
       type: "object",
       properties: {
         taskId: { type: "number" },
+        projectDir: {
+          type: "string",
+          description: "Target project directory for development, validation, and PR review",
+        },
         skipFigma: { type: "boolean", description: "Skip Figma wireframe generation" },
         skipArch: { type: "boolean", description: "Skip architecture scaffold generation" },
         force: { type: "boolean", description: "Override conflict detection" },

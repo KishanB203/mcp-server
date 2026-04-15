@@ -43,6 +43,7 @@ import { appendTaskHistory, updateContext } from "../shared/memory.js";
 import { createLogger } from "../shared/logger.js";
 import { validateWorkflowConfig } from "../config/env.js";
 import { validationTool } from "../tools/validationTool.js";
+import { listMcpDocFiles, loadMcpDocsMarkdown } from "./mcp-docs.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Internal helpers
@@ -81,27 +82,35 @@ const slugFromTitle = (title = "") => {
  * Runs a git command with stdio inherited (output visible in terminal).
  *
  * @param {string} cmd
+ * @param {{ projectDir?: string }} [options]
  */
-const git = (cmd) => {
-  execSync(cmd, { stdio: "inherit" });
+const git = (cmd, options = {}) => {
+  execSync(cmd, {
+    stdio: "inherit",
+    cwd: options.projectDir,
+  });
 }
 
 /**
  * Runs a git command and returns trimmed stdout.
  *
  * @param {string} cmd
+ * @param {{ projectDir?: string }} [options]
  * @returns {string}
  */
-const gitOut = (cmd) => {
-  return execSync(cmd, { encoding: "utf8" }).trim();
+const gitOut = (cmd, options = {}) => {
+  return execSync(cmd, {
+    encoding: "utf8",
+    cwd: options.projectDir,
+  }).trim();
 }
 
 /**
  * Throws if the current working directory is not inside a git repository.
  */
-const ensureGitRepo = () => {
+const ensureGitRepo = (options = {}) => {
   try {
-    gitOut("git rev-parse --is-inside-work-tree");
+    gitOut("git rev-parse --is-inside-work-tree", options);
   } catch {
     throw new Error("Current directory is not a git repository");
   }
@@ -135,8 +144,9 @@ const extractScenariosFromAcceptanceCriteria = (criteriaText = "") => {
   ];
 }
 
-const writeScenarioChecklistFile = ({ task, scenarios }) => {
-  const dir = path.join(process.cwd(), "tmp", "review-checklists");
+const writeScenarioChecklistFile = ({ task, scenarios, projectDir }) => {
+  const baseDir = projectDir ?? process.cwd();
+  const dir = path.join(baseDir, "tmp", "review-checklists");
   fs.mkdirSync(dir, { recursive: true });
   const checklistPath = path.join(dir, `task-${task.id}-scenario-checklist.md`);
   const content = [
@@ -193,12 +203,21 @@ const writeScenarioChecklistFile = ({ task, scenarios }) => {
 export async function runWorkflow(taskId, options = {}) {
   const logger = options.logger ?? createLogger({ prefix: "workflow" });
   const github = options.githubClient ?? createGitHubClient();
+  const projectDir = options.projectDir;
 
   const id = mustInt(taskId, "taskId");
   logger.logTaskStart(id);
 
   validateWorkflowConfig();
-  ensureGitRepo();
+  ensureGitRepo({ projectDir });
+  const mcpDocFiles = listMcpDocFiles({ projectDir });
+  const mcpDocs = loadMcpDocsMarkdown({ projectDir });
+  if (mcpDocFiles.length > 0) {
+    logger.logAgentStep(
+      "MCPDocs",
+      `Loaded ${mcpDocFiles.length} file(s) from mcp_docs/`
+    );
+  }
 
   const repo = {
     owner: process.env.REPO_OWNER,
@@ -229,6 +248,7 @@ export async function runWorkflow(taskId, options = {}) {
   const checklistPath = writeScenarioChecklistFile({
     task,
     scenarios: extractScenariosFromAcceptanceCriteria(task.acceptanceCriteria),
+    projectDir,
   });
   await safeAdoComment(
     id,
@@ -272,7 +292,7 @@ export async function runWorkflow(taskId, options = {}) {
   const featureSlug = slugFromTitle(task.title) || `task-${task.id}`;
   if (!options.skipArch) {
     logger.logAgentStep("CodeAgent", `Generate scaffold "${featureSlug}"`);
-    architecture = codeAgent.generateArchitecture(featureSlug);
+    architecture = codeAgent.generateArchitecture(featureSlug, projectDir);
   }
 
   // ── Step 6: Branch planning ───────────────────────────────────────────────
@@ -280,7 +300,7 @@ export async function runWorkflow(taskId, options = {}) {
   const nameCheck = validateBranchName(branchName);
   if (!nameCheck.valid) throw new Error(nameCheck.reason);
 
-  const preflight = preflightCheck(task.id, branchName);
+  const preflight = preflightCheck(task.id, branchName, { projectDir });
   if (!preflight.canProceed && !options.force) {
     await safeAdoComment(
       id,
@@ -301,13 +321,13 @@ export async function runWorkflow(taskId, options = {}) {
 
   // ── Step 8: Local checkout ────────────────────────────────────────────────
   logger.logAgentStep("Git", `Checkout ${baseBranch} and create ${branchName}`);
-  git(`git fetch origin ${baseBranch}`);
-  git(`git checkout ${baseBranch}`);
-  git(`git pull origin ${baseBranch}`);
+  git(`git fetch origin ${baseBranch}`, { projectDir });
+  git(`git checkout ${baseBranch}`, { projectDir });
+  git(`git pull origin ${baseBranch}`, { projectDir });
   try {
-    git(`git checkout -b ${branchName}`);
+    git(`git checkout -b ${branchName}`, { projectDir });
   } catch {
-    git(`git checkout ${branchName}`);
+    git(`git checkout ${branchName}`, { projectDir });
   }
 
   // ── Step 9: Mark In Progress ──────────────────────────────────────────────
@@ -324,29 +344,31 @@ export async function runWorkflow(taskId, options = {}) {
     options.commitMessage ?? `feat: implement ${task.title} [#${task.id}]`;
   let commitOk = false;
   try {
-    git(`git add -A`);
+    git(`git add -A`, { projectDir });
     try {
-      git(`git commit -m "${commitMsg.replace(/"/g, '\\"')}"`);
+      git(`git commit -m "${commitMsg.replace(/"/g, '\\"')}"`, { projectDir });
       commitOk = true;
     } catch {
-      const status = gitOut("git status --porcelain");
+      const status = gitOut("git status --porcelain", { projectDir });
       if (!status) {
         logger.warn("No changes to commit — scaffold already existed");
       } else {
         throw new Error("Commit failed");
       }
     }
-    git(`git push -u origin ${branchName}`);
+    git(`git push -u origin ${branchName}`, { projectDir });
   } catch (e) {
     logger.warn(`Commit/push step failed: ${e.message}`);
   }
 
   // ── Step 11: Create PR ────────────────────────────────────────────────────
-  const validation = validationTool.validateBranch(baseBranch, branchName);
+  const validation = validationTool.validateBranch(baseBranch, branchName, {
+    projectDir,
+  });
   if (!validation.valid) {
     await safeAdoComment(
       id,
-      `Rules validation failed before PR creation:\n${validation.issues.join("\n")}`
+      `Pre-PR checks failed before PR creation:\n${validation.issues.join("\n")}`
     );
     return {
       success: false,
@@ -356,10 +378,14 @@ export async function runWorkflow(taskId, options = {}) {
     };
   }
 
-  logger.logAgentStep("Validation", "Rules validation passed");
+  logger.logAgentStep(
+    "Validation",
+    `Pre-PR checks passed (${validation.ruleFiles?.length ?? 0} rule file(s) under rules/)`
+  );
   logger.logAgentStep("GitHub", "Create pull request");
   const prPayload = buildPR(task, {
     branchName,
+    ruleFiles: validation.ruleFiles,
     figmaUrl: figma?.figmaFile?.url,
     summary: po?.analysis?.summary,
     changes:
@@ -382,7 +408,10 @@ export async function runWorkflow(taskId, options = {}) {
 
   // ── Step 12: PR review ────────────────────────────────────────────────────
   logger.logAgentStep("PRReviewer", `Review PR #${pr.number}`);
-  const review = await reviewAgent.reviewPullRequest(pr.number, branchName, { baseBranch });
+  const review = await reviewAgent.reviewPullRequest(pr.number, branchName, {
+    baseBranch,
+    projectDir,
+  });
 
   if (!review.approved) {
     let createdBug = null;
@@ -482,5 +511,9 @@ export async function runWorkflow(taskId, options = {}) {
     pr,
     review,
     merge,
+    mcpDocs: {
+      files: mcpDocFiles,
+      markdown: mcpDocs,
+    },
   };
 }

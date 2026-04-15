@@ -11,14 +11,14 @@ const planBranch = (taskId, taskTitle) => {
   return branchName;
 };
 
-const checkoutFeatureBranch = (branchName, baseBranch) => {
-  gitTool.ensureRepository();
-  gitTool.checkoutBranch(branchName, baseBranch);
+const checkoutFeatureBranch = (branchName, baseBranch, projectDir) => {
+  gitTool.ensureRepository({ projectDir });
+  gitTool.checkoutBranch(branchName, baseBranch, { projectDir });
 };
 
-const commitAndPush = (commitMessage, branchName) => {
-  gitTool.commitAll(commitMessage);
-  gitTool.pushUpstream(branchName);
+const commitAndPush = (commitMessage, branchName, projectDir) => {
+  gitTool.commitAll(commitMessage, { projectDir });
+  gitTool.pushUpstream(branchName, { projectDir });
 };
 
 const openPullRequest = async (repo, title, body, head, base) =>

@@ -7,39 +7,44 @@ const run = (command, options = {}) => {
   return execSync(command, {
     encoding: 'utf8',
     stdio: options.stdio ?? 'pipe',
+    cwd: options.cwd,
   });
 }
 
 export const gitTool = {
-  ensureRepository() {
+  ensureRepository(options = {}) {
     try {
-      run('git rev-parse --is-inside-work-tree');
+      run('git rev-parse --is-inside-work-tree', { cwd: options.projectDir });
     } catch {
       throw new Error('Current directory is not a git repository');
     }
   },
-  checkoutBranch(branchName, baseBranch = 'main') {
-    run(`git fetch origin ${baseBranch}`);
-    run(`git checkout ${baseBranch}`);
-    run(`git pull origin ${baseBranch}`);
+  checkoutBranch(branchName, baseBranch = 'main', options = {}) {
+    const cwd = options.projectDir;
+    run(`git fetch origin ${baseBranch}`, { cwd });
+    run(`git checkout ${baseBranch}`, { cwd });
+    run(`git pull origin ${baseBranch}`, { cwd });
     try {
-      run(`git checkout -b ${branchName}`);
+      run(`git checkout -b ${branchName}`, { cwd });
     } catch {
-      run(`git checkout ${branchName}`);
+      run(`git checkout ${branchName}`, { cwd });
     }
   },
-  commitAll(message) {
-    run('git add -A');
-    run(`git commit -m "${String(message).replace(/"/g, '\\"')}"`);
+  commitAll(message, options = {}) {
+    const cwd = options.projectDir;
+    run('git add -A', { cwd });
+    run(`git commit -m "${String(message).replace(/"/g, '\\"')}"`, { cwd });
   },
-  pushUpstream(branchName) {
-    run(`git push -u origin ${branchName}`);
+  pushUpstream(branchName, options = {}) {
+    run(`git push -u origin ${branchName}`, { cwd: options.projectDir });
   },
-  diff(baseBranch, headBranch) {
-    return run(`git diff ${baseBranch}...${headBranch}`);
+  diff(baseBranch, headBranch, options = {}) {
+    return run(`git diff ${baseBranch}...${headBranch}`, { cwd: options.projectDir });
   },
-  changedFiles(baseBranch, headBranch) {
-    const output = run(`git diff --name-only ${baseBranch}...${headBranch}`).trim();
+  changedFiles(baseBranch, headBranch, options = {}) {
+    const output = run(`git diff --name-only ${baseBranch}...${headBranch}`, {
+      cwd: options.projectDir,
+    }).trim();
     return output ? output.split('\n') : [];
   },
 };

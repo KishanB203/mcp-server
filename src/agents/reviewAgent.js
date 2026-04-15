@@ -11,6 +11,7 @@ const reviewPullRequest = async (prNumber, branchName, options = {}) => {
     prNumber: Number(prNumber),
     baseBranch: options.baseBranch ?? process.env.BASE_BRANCH ?? 'main',
     headBranch: branchName,
+    projectDir: options.projectDir,
   });
 
   return {

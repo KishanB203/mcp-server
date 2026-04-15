@@ -2,6 +2,10 @@ import { generateBranchName, validateBranchName } from '../tools/branch/branch-n
 import { preflightCheck } from '../tools/branch/conflict-prevention.js';
 import { ticketTool } from '../tools/ticketTool.js';
 import { gitService } from '../services/gitService.js';
+import {
+  listProjectRuleMarkdownFiles,
+  loadProjectRulesMarkdown,
+} from '../services/project-rules.js';
 import { prAgent } from './prAgent.js';
 
 /**
@@ -22,6 +26,7 @@ const AGENT_ROLE = 'Developer';
 const workOnTask = async (task, options = {}) => {
   const { force = false } = options;
   const baseBranch = options.baseBranch ?? process.env.BASE_BRANCH ?? 'main';
+  const projectDir = options.projectDir;
   console.error(`[${AGENT_NAME}] Starting work on task #${task.id}: ${task.title}`);
   const log = [];
 
@@ -33,7 +38,7 @@ const workOnTask = async (task, options = {}) => {
     throw new Error(nameCheck.reason);
   }
 
-  const preflight = preflightCheck(task.id, branchName);
+  const preflight = preflightCheck(task.id, branchName, { projectDir });
   if (!preflight.canProceed && !force) {
     log.push(...preflight.warnings);
     return {
@@ -43,6 +48,10 @@ const workOnTask = async (task, options = {}) => {
       log,
       warning: 'Task already has an open branch/PR. Use --force to override.',
       preflight,
+      projectRules: {
+        files: listProjectRuleMarkdownFiles({ projectDir }),
+        markdown: loadProjectRulesMarkdown({ projectDir }),
+      },
     };
   }
   if (preflight.warnings.length > 0) {
@@ -50,7 +59,7 @@ const workOnTask = async (task, options = {}) => {
   }
 
   try {
-    gitService.checkoutFeatureBranch(branchName, baseBranch);
+    gitService.checkoutFeatureBranch(branchName, baseBranch, projectDir);
     const action = preflight.existingBranch ? 'Checked out existing branch' : 'Created branch';
     log.push(`${action}: ${branchName}`);
   } catch (err) {
@@ -70,6 +79,10 @@ const workOnTask = async (task, options = {}) => {
     branchName,
     task,
     log,
+    projectRules: {
+      files: listProjectRuleMarkdownFiles({ projectDir }),
+      markdown: loadProjectRulesMarkdown({ projectDir }),
+    },
   };
 };
 
@@ -77,9 +90,10 @@ const workOnTask = async (task, options = {}) => {
  * Commit and push current changes.
  */
 const commitAndPush = (task, branchName, message) => {
+  const projectDir = task?.projectDir;
   const commitMsg = message || `feat: ${task.title} [#${task.id}]`;
   try {
-    gitService.commitAndPush(commitMsg, branchName);
+    gitService.commitAndPush(commitMsg, branchName, projectDir);
     return { success: true, commitMsg };
   } catch (err) {
     return { success: false, error: err.message };

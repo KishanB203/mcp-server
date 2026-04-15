@@ -25,17 +25,19 @@ import { extractTaskIdFromBranch } from "./branch-naming.js";
  * @param {string} branchName
  * @returns {{ exists: boolean, location?: 'local'|'remote' }}
  */
-export const branchExists = (branchName) => {
+export const branchExists = (branchName, options = {}) => {
+  const cwd = options.projectDir;
   try {
     const local = execSync(`git branch --list "${branchName}"`, {
       encoding: "utf8",
       stdio: ["pipe", "pipe", "pipe"],
+      cwd,
     }).trim();
     if (local) return { exists: true, location: "local" };
 
     const remote = execSync(
       `git ls-remote --heads origin "${branchName}" 2>/dev/null`,
-      { encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] }
+      { encoding: "utf8", stdio: ["pipe", "pipe", "pipe"], cwd }
     ).trim();
     if (remote) return { exists: true, location: "remote" };
 
@@ -51,11 +53,12 @@ export const branchExists = (branchName) => {
  * @param {number|string} taskId
  * @returns {string[]}  Branch names (trimmed, asterisk removed)
  */
-export const findBranchesForTask = (taskId) => {
+export const findBranchesForTask = (taskId, options = {}) => {
+  const cwd = options.projectDir;
   try {
     const output = execSync(
       `git branch -a --list "*feature/${taskId}-*" 2>/dev/null`,
-      { encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] }
+      { encoding: "utf8", stdio: ["pipe", "pipe", "pipe"], cwd }
     ).trim();
     return output
       ? output.split("\n").map((b) => b.trim().replace(/^\*\s*/, ""))
@@ -75,11 +78,12 @@ export const findBranchesForTask = (taskId) => {
  *
  * @returns {Array<{number:number, title:string, branch:string, taskId:string|null}>}
  */
-export const listOpenPRs = () => {
+export const listOpenPRs = (options = {}) => {
+  const cwd = options.projectDir;
   try {
     const output = execSync(
       `gh pr list --state open --json number,title,headRefName 2>/dev/null`,
-      { encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] }
+      { encoding: "utf8", stdio: ["pipe", "pipe", "pipe"], cwd }
     ).trim();
     const prs = JSON.parse(output || "[]");
     return prs.map((pr) => ({
@@ -99,8 +103,8 @@ export const listOpenPRs = () => {
  * @param {number|string} taskId
  * @returns {{number:number,title:string,branch:string,taskId:string|null}|null}
  */
-export const prExistsForTask = (taskId) => {
-  return listOpenPRs().find((pr) => pr.taskId === String(taskId)) ?? null;
+export const prExistsForTask = (taskId, options = {}) => {
+  return listOpenPRs(options).find((pr) => pr.taskId === String(taskId)) ?? null;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -114,12 +118,12 @@ export const prExistsForTask = (taskId) => {
  * @param {string}        branchName  Proposed branch name (output of `generateBranchName`)
  * @returns {{ canProceed: boolean, warnings: string[], existingBranch: string|null, existingPR: object|null }}
  */
-export const preflightCheck = (taskId, branchName) => {
+export const preflightCheck = (taskId, branchName, options = {}) => {
   const warnings = [];
   let existingBranch = null;
   let existingPR = null;
 
-  const branches = findBranchesForTask(taskId);
+  const branches = findBranchesForTask(taskId, options);
   if (branches.length > 0) {
     existingBranch = branches[0];
     warnings.push(
@@ -127,7 +131,7 @@ export const preflightCheck = (taskId, branchName) => {
     );
   }
 
-  const pr = prExistsForTask(taskId);
+  const pr = prExistsForTask(taskId, options);
   if (pr) {
     existingPR = pr;
     warnings.push(
@@ -135,7 +139,7 @@ export const preflightCheck = (taskId, branchName) => {
     );
   }
 
-  const branchCheck = branchExists(branchName);
+  const branchCheck = branchExists(branchName, options);
   if (branchCheck.exists) {
     warnings.push(
       `Branch "${branchName}" already exists (${branchCheck.location})`
