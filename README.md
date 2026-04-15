@@ -52,11 +52,6 @@ claude-mcp-automation/
 │   └── index.js                    ← CLI commands
 ├── memory/
 │   └── project-context.json        ← Persistent project context/history
-├── rules/
-│   ├── coding-standard.md          ← JS/React coding standards
-│   ├── architecture.md             ← Clean architecture rules
-│   ├── naming-rule.md              ← File/variable/function naming
-│   └── testing-rule.md             ← Test structure & coverage
 ├── .github/
 │   └── PULL_REQUEST_TEMPLATE/
 │       └── pull_request_template.md
@@ -343,17 +338,6 @@ UI (React) → Application → Domain
 
 ---
 
-## Coding Standards
-
-Claude follows the rules in `/rules/`:
-
-- **`coding-standard.md`** — ES Modules, const/let, async/await, JSDoc, max 30 lines per function
-- **`architecture.md`** — Layer separation, dependency direction
-- **`naming-rule.md`** — PascalCase for classes/components, camelCase for functions/variables
-- **`testing-rule.md`** — Jest, 80% coverage, AAA pattern, one test file per source file
-
----
-
 ## Multi-Agent Flow
 
 ```
@@ -440,7 +424,6 @@ npm run test:coverage
 - ✨ Added branch naming enforcement
 - ✨ Added conflict prevention
 - ✨ Added PR template builder
-- ✨ Added coding rules (`/rules/`)
 - ✨ Added GitHub PR template
 
 ### v1.0.0

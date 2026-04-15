@@ -1,144 +1,171 @@
-import { getWorkItem } from "../tools/get-ticket.js";
-import { updateWorkItemState, addWorkItemComment } from "../tools/update-ticket.js";
+import { ticketTool } from '../tools/ticketTool.js';
 
-/**
- * Product Owner Agent
- * Responsibilities:
- *   - Read and interpret Azure DevOps tasks/PBIs
- *   - Break down requirements into actionable specs
- *   - Validate acceptance criteria completeness
- *   - Prioritize tasks and flag blockers
- */
+const AGENT_NAME = 'ProductOwnerAgent';
 
-export class ProductOwnerAgent {
-  constructor() {
-    this.name = "ProductOwnerAgent";
-    this.role = "Product Owner";
+const validateTask = (task) => {
+  const issues = [];
+
+  if (!task.description || task.description === 'No description provided.') {
+    issues.push('Missing description');
+  }
+  if (
+    !task.acceptanceCriteria ||
+    task.acceptanceCriteria === 'No acceptance criteria provided.'
+  ) {
+    issues.push('Missing acceptance criteria');
+  }
+  if (!task.storyPoints || task.storyPoints === 'Not set') {
+    issues.push('Story points not estimated');
   }
 
-  /**
-   * Analyze a work item and produce a structured spec for downstream agents
-   */
-  async analyzeTask(taskId) {
-    console.error(`[${this.name}] Analyzing task #${taskId}...`);
+  return {
+    isValid: issues.length === 0,
+    issues,
+    readyForDevelopment: issues.length === 0,
+  };
+};
 
-    const task = await getWorkItem(taskId);
+const buildTaskSearchText = (task) => {
+  const searchableParts = [
+    task.title,
+    task.description,
+    task.acceptanceCriteria,
+    task.tags,
+    task.type,
+    task.areaPath,
+  ];
+  return searchableParts
+    .filter((value) => typeof value === 'string' && value.trim().length > 0)
+    .join(' ')
+    .toLowerCase();
+};
 
-    const analysis = this.buildAnalysis(task);
+const normalizeMatchers = (patterns) => patterns.map((pattern) => new RegExp(pattern, 'i'));
 
-    // Comment on the ADO task
-    await addWorkItemComment(
-      taskId,
-      `🤖 **ProductOwnerAgent** analyzed this task.\n\n${analysis.summary}`
-    );
+const UI_PATTERNS = normalizeMatchers([
+  '\\b(ui|ux|frontend|front-end|client-side|react|angular|vue)\\b',
+  '\\b(screen|page|view|layout|template|wireframe|mockup)\\b',
+  '\\b(form|field|input|dropdown|checkbox|radio|datepicker)\\b',
+  '\\b(button|dialog|modal|toast|tooltip|sidebar|header|footer|tab)\\b',
+  '\\b(component|widget|dashboard|table|grid|card|banner)\\b',
+  '\\b(render|display|visible|responsive|pixel|design system)\\b',
+  '\\b(as a user|user can|user should|on click|clicking)\\b',
+]);
 
-    return {
-      agent: this.name,
-      task,
-      analysis,
-    };
+const API_PATTERNS = normalizeMatchers([
+  '\\b(api|rest|graphql|endpoint|route|controller)\\b',
+  '\\b(service|backend|server|middleware|microservice)\\b',
+  '\\b(database|sql|nosql|schema|migration|index|query|mutation)\\b',
+  '\\b(auth|authorization|token|jwt|session|permission)\\b',
+  '\\b(integration|webhook|queue|event|cron|job|worker)\\b',
+  '\\b(create|read|update|delete|crud)\\b',
+]);
+
+const matchSignals = (text, patterns) => {
+  const matches = [];
+  for (const pattern of patterns) {
+    const result = text.match(pattern);
+    if (result) matches.push(result[0]);
   }
+  return [...new Set(matches)];
+};
 
-  /**
-   * Validate that a task has sufficient information to proceed
-   */
-  validateTask(task) {
-    const issues = [];
+const classifyScope = (task) => {
+  const text = buildTaskSearchText(task);
+  const uiSignals = matchSignals(text, UI_PATTERNS);
+  const apiSignals = matchSignals(text, API_PATTERNS);
 
-    if (!task.description || task.description === "No description provided.") {
-      issues.push("Missing description");
-    }
-    if (
-      !task.acceptanceCriteria ||
-      task.acceptanceCriteria === "No acceptance criteria provided."
-    ) {
-      issues.push("Missing acceptance criteria");
-    }
-    if (!task.storyPoints || task.storyPoints === "Not set") {
-      issues.push("Story points not estimated");
-    }
+  const uiConfidence = Math.min(1, uiSignals.length / 3);
+  const apiConfidence = Math.min(1, apiSignals.length / 3);
 
-    return {
-      isValid: issues.length === 0,
-      issues,
-      readyForDevelopment: issues.length === 0,
-    };
-  }
+  return {
+    text,
+    uiSignals,
+    apiSignals,
+    uiConfidence,
+    apiConfidence,
+    uiRequired: uiSignals.length > 0,
+    apiRequired: apiSignals.length > 0,
+  };
+};
 
-  /**
-   * Build a structured analysis of the task
-   */
-  buildAnalysis(task) {
-    const validation = this.validateTask(task);
+const detectsUIWork = (task) => {
+  return classifyScope(task).uiRequired;
+};
 
-    const uiRequired = this.detectsUIWork(task);
-    const apiRequired = this.detectsAPIWork(task);
-    const testingRequired = true; // always true
+const detectsAPIWork = (task) => {
+  return classifyScope(task).apiRequired;
+};
 
-    return {
-      taskId: task.id,
-      taskTitle: task.title,
-      taskType: task.type,
-      priority: task.priority,
-      validation,
-      requires: {
-        uiDesign: uiRequired,
-        apiChanges: apiRequired,
-        testing: testingRequired,
-        documentation:
-          task.description?.toLowerCase().includes("document") || false,
+const suggestAgents = ({ uiRequired }) => {
+  const agents = ['code-agent', 'developer-agent', 'review-agent', 'devops-agent'];
+  if (uiRequired) agents.unshift('figma-design-step');
+  return agents;
+};
+
+const buildAnalysis = (task) => {
+  const validation = validateTask(task);
+  const scope = classifyScope(task);
+  const uiRequired = scope.uiRequired;
+  const apiRequired = scope.apiRequired;
+
+  return {
+    taskId: task.id,
+    taskTitle: task.title,
+    taskType: task.type,
+    priority: task.priority,
+    validation,
+    requires: {
+      uiDesign: uiRequired,
+      apiChanges: apiRequired,
+      testing: true,
+      documentation: task.description?.toLowerCase().includes('document') || false,
+    },
+    scopeSignals: {
+      ui: scope.uiSignals,
+      api: scope.apiSignals,
+      confidence: {
+        ui: scope.uiConfidence,
+        api: scope.apiConfidence,
       },
-      suggestedAgents: this.suggestAgents({ uiRequired, apiRequired }),
-      summary:
-        `**Task Analysis:**\n` +
-        `- Type: ${task.type}\n` +
-        `- Priority: ${task.priority}\n` +
-        `- UI Work: ${uiRequired ? "Yes" : "No"}\n` +
-        `- API Work: ${apiRequired ? "Yes" : "No"}\n` +
-        `- Validation: ${validation.isValid ? "✅ Ready" : "⚠️ Issues: " + validation.issues.join(", ")}`,
-    };
-  }
+    },
+    suggestedAgents: suggestAgents({ uiRequired, apiRequired }),
+    summary:
+      `**Task Analysis:**\n` +
+      `- Type: ${task.type}\n` +
+      `- Priority: ${task.priority}\n` +
+      `- UI Work: ${uiRequired ? 'Yes' : 'No'}\n` +
+      `- API Work: ${apiRequired ? 'Yes' : 'No'}\n` +
+      `- UI Signals: ${scope.uiSignals.length ? scope.uiSignals.join(', ') : 'None'}\n` +
+      `- API Signals: ${scope.apiSignals.length ? scope.apiSignals.join(', ') : 'None'}\n` +
+      `- Validation: ${validation.isValid ? 'Ready' : `Issues: ${validation.issues.join(', ')}`}`,
+  };
+};
 
-  detectsUIWork(task) {
-    const keywords = [
-      "ui",
-      "screen",
-      "page",
-      "form",
-      "component",
-      "display",
-      "view",
-      "button",
-      "modal",
-      "layout",
-    ];
-    const text =
-      `${task.title} ${task.description} ${task.acceptanceCriteria}`.toLowerCase();
-    return keywords.some((k) => text.includes(k));
-  }
+const analyzeTask = async (taskId) => {
+  console.error(`[${AGENT_NAME}] Analyzing task #${taskId}...`);
+  const task = await ticketTool.getById(taskId);
+  const analysis = buildAnalysis(task);
 
-  detectsAPIWork(task) {
-    const keywords = [
-      "api",
-      "endpoint",
-      "service",
-      "backend",
-      "database",
-      "query",
-      "mutation",
-      "rest",
-      "fetch",
-    ];
-    const text =
-      `${task.title} ${task.description} ${task.acceptanceCriteria}`.toLowerCase();
-    return keywords.some((k) => text.includes(k));
-  }
+  await ticketTool.addComment(taskId, `ProductOwnerAgent analyzed this task.\n\n${analysis.summary}`);
 
-  suggestAgents({ uiRequired, apiRequired }) {
-    const agents = ["architect-agent", "developer-agent", "reviewer-agent", "devops-agent"];
-    if (uiRequired) agents.unshift("figma-design-step");
-    return agents;
-  }
-}
+  return {
+    agent: AGENT_NAME,
+    task,
+    analysis,
+  };
+};
 
-export default new ProductOwnerAgent();
+const productOwnerAgent = {
+  name: AGENT_NAME,
+  role: 'Product Owner',
+  analyzeTask,
+  validateTask,
+  buildAnalysis,
+  detectsUIWork,
+  detectsAPIWork,
+  classifyScope,
+  suggestAgents,
+};
+
+export default productOwnerAgent;
