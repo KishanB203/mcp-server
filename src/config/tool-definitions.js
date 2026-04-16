@@ -69,7 +69,7 @@ export const TOOLS = [
   },
   {
     name: "ado_update_work_item_state",
-    description: "Updates the state of an ADO work item (e.g. 'In Progress', 'Done').",
+    description: "Updates the state of an ADO work item (e.g. 'In Progress', 'Resolved', 'Closed', 'Done').",
     inputSchema: {
       type: "object",
       properties: {

@@ -39,6 +39,11 @@ const createPullRequest = async (task, branchName, options = {}) => {
     ...options,
   });
   const pr = await gitService.openPullRequest(repo, title, body, branchName, baseBranch);
+  try {
+    await ticketTool.updateState(task.id, 'Resolved');
+  } catch {
+    // Non-fatal: PR was created successfully even if state update fails.
+  }
   await ticketTool.addComment(task.id, `Pull Request created:\n\n${pr.url}\n\nTitle: ${pr.title}`);
 
   return {

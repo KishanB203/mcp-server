@@ -405,6 +405,12 @@ export async function runWorkflow(taskId, options = {}) {
     id,
     `Pull Request created:\n\n${pr.url}\n\nTitle: ${pr.title}`
   );
+  try {
+    await updateWorkItemState(task.id, "Resolved");
+    await safeAdoComment(id, `PR #${pr.number} created and task moved to Resolved.`);
+  } catch (e) {
+    logger.warn(`ADO Resolved update failed: ${e.message}`);
+  }
 
   // ── Step 12: PR review ────────────────────────────────────────────────────
   logger.logAgentStep("PRReviewer", `Review PR #${pr.number}`);
