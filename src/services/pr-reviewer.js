@@ -118,7 +118,7 @@ const renderComment = ({
     );
   }
 
-  lines.push("---", "_Automated PR review by claude-mcp-automation_");
+  lines.push("---", "_Automated PR review by mcp-automation_");
   return lines.join("\n");
 }
 

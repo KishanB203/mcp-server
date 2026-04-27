@@ -75,7 +75,7 @@ const buildHeaders = () => {
     Accept: "application/vnd.github+json",
     "X-GitHub-Api-Version": GITHUB_API_VERSION,
     "Content-Type": "application/json",
-    "User-Agent": "claude-mcp-automation/2.0.0",
+    "User-Agent": "mcp-automation/2.0.0",
   };
   if (GITHUB_TOKEN) headers.Authorization = `Bearer ${GITHUB_TOKEN}`;
   return headers;

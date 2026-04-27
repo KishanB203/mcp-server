@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Claude MCP Automation — CLI
+ * MCP Automation — CLI
  *
  * Provides a command-line interface to the same pipeline logic that the
  * MCP server exposes as tools.  Useful for local development and CI scripts.
@@ -37,8 +37,8 @@ import { createGitHubClient } from "../src/infrastructure/github-client.js";
 import { createLogger } from "../src/shared/logger.js";
 
 program
-  .name("claude")
-  .description("Claude MCP Automation CLI — AI-powered DevOps pipeline")
+  .name("mcp")
+  .description("MCP Automation CLI — AI-powered DevOps pipeline")
   .version("2.0.0");
 
 // ─── work-on-task ─────────────────────────────────────────────────────────────

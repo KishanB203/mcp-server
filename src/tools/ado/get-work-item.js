@@ -2,7 +2,7 @@
  * @module tools/ado/get-work-item
  *
  * Fetches a single Azure DevOps work item by ID and returns a clean,
- * Claude-friendly object that includes all key fields, comments, and relations.
+ * MCP-friendly object that includes all key fields, comments, and relations.
  */
 
 import { adoClient } from "../../infrastructure/ado-client.js";
