@@ -60,8 +60,8 @@ export class Logger {
     this.logFilePath =
       options.logFilePath ??
       process.env.LOG_FILE ??
-      path.resolve(process.cwd(), "logs", "claude-auto.log");
-    this.prefix = options.prefix ?? "claude";
+      path.resolve(process.cwd(), "logs", "mcp-auto.log");
+    this.prefix = options.prefix ?? "mcp";
   }
 
   // ── File bootstrap ────────────────────────────────────────────────────────

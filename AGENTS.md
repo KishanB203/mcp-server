@@ -49,7 +49,7 @@ Requirement → PBI Analysis → Design → Architecture → Code → PR → Rev
 - Generate context.md, modular frontend/*.md UI specs, and backend/*.md (API surface, data model, services/integrations, security/auth)
 - Create structured documentation for full-stack features
 
-## MCP Tools (use via Claude Code)
+## MCP Tools (use via Code)
 
 Call `agent_full_workflow(taskId)` to run the complete pipeline.
 

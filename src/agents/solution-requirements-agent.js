@@ -486,7 +486,7 @@ export class SolutionRequirementsAgent {
       role: this.role,
       featureName: safeFeature,
       workItemTitle: safeFeature,
-      codexPrompt: workItemDescription,
+      prompt: workItemDescription,
       workItemDescription,
       acceptanceCriteria,
       sources: {

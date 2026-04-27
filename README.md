@@ -1,14 +1,14 @@
-# Claude MCP Automation v2.0
+# MCP Automation v2.0
 
 > AI-powered DevOps pipeline: Azure DevOps → Figma → Clean Architecture → GitHub PR → Code Review → Merge
 
 One command automates your entire development workflow:
 
 ```bash
-claude work-on-task 123
+mcp work-on-task 123
 ```
 
-Claude will:
+mcp will:
 1. 📋 Fetch and analyze the Azure DevOps task
 2. 🎨 Generate a Figma wireframe (for UI tasks)
 3. 🏗️ Generate clean architecture + runnable base code (domain/application/infrastructure/ui)
@@ -22,7 +22,7 @@ Claude will:
 ## Architecture
 
 ```
-claude-mcp-automation/
+mcp-automation/
 ├── src/
 │   ├── index.js                    ← MCP Server (17 tools)
 │   ├── ado-client.js               ← Azure DevOps API client
@@ -56,7 +56,6 @@ claude-mcp-automation/
 │   └── PULL_REQUEST_TEMPLATE/
 │       └── pull_request_template.md
 ├── .env.example                    ← Environment variable template
-├── CLAUDE.md                       ← Claude Code instructions
 └── README.md
 ```
 
@@ -119,16 +118,16 @@ BASE_BRANCH=main
 #### Getting your Figma File Key
 From the Figma URL: `https://www.figma.com/file/{FILE_KEY}/...`
 
-### 3. Configure Claude Code MCP
+### 3. Configure Code MCP
 
-Add to your `claude_desktop_config.json` (or Claude Code config):
+Add to your `desktop_config.json` (or Code config):
 
 ```json
 {
   "mcpServers": {
-    "claude-mcp-automation": {
+    "mcp-automation": {
       "command": "node",
-      "args": ["/path/to/claude-mcp-automation/src/index.js"]
+      "args": ["/path/to/mcp-automation/src/index.js"]
     }
   }
 }
@@ -151,10 +150,10 @@ npm install -g .
 #### `work-on-task` — Full automated workflow
 
 ```bash
-claude work-on-task 123
-claude work-on-task 123 --skip-figma
-claude work-on-task 123 --skip-arch
-claude work-on-task 123 --force  # override conflict detection
+mcp work-on-task 123
+mcp work-on-task 123 --skip-figma
+mcp work-on-task 123 --skip-arch
+mcp work-on-task 123 --force  # override conflict detection
 ```
 
 **What it does:**
@@ -170,8 +169,8 @@ claude work-on-task 123 --force  # override conflict detection
 #### `create-project` — Scaffold a new clean-architecture project/feature
 
 ```bash
-claude create-project "employee management"
-claude create-project "order-tracking" --dir ./my-app
+mcp create-project "employee management"
+mcp create-project "order-tracking" --dir ./my-app
 ```
 
 **Creates:**
@@ -198,8 +197,8 @@ src/
 #### `review-pr` — Automated PR review
 
 ```bash
-claude review-pr 42
-claude review-pr 42 --branch feature/123-add-employee
+mcp review-pr 42
+mcp review-pr 42 --branch feature/123-add-employee
 ```
 
 **Checks:**
@@ -217,7 +216,7 @@ Posts review comment directly to GitHub PR via the GitHub REST API.
 #### `generate-design` — Generate Figma wireframe
 
 ```bash
-claude generate-design 123
+mcp generate-design 123
 ```
 
 **What it does:**
@@ -231,10 +230,10 @@ claude generate-design 123
 #### `list-tasks` — List ADO tasks
 
 ```bash
-claude list-tasks
-claude list-tasks --state "In Progress"
-claude list-tasks --type "Bug" --limit 10
-claude list-tasks --sprint "MyProject\\Sprint 3"
+mcp list-tasks
+mcp list-tasks --state "In Progress"
+mcp list-tasks --type "Bug" --limit 10
+mcp list-tasks --sprint "MyProject\\Sprint 3"
 ```
 
 ---
@@ -242,9 +241,9 @@ claude list-tasks --sprint "MyProject\\Sprint 3"
 #### `merge-pr` — Merge PR and close ticket
 
 ```bash
-claude merge-pr 42
-claude merge-pr 42 --strategy --squash
-claude merge-pr 42 --task-id 123
+mcp merge-pr 42
+mcp merge-pr 42 --strategy --squash
+mcp merge-pr 42 --task-id 123
 ```
 
 **What it does:**
@@ -258,7 +257,7 @@ claude merge-pr 42 --task-id 123
 
 ## MCP Tools Reference
 
-When using Claude Code, these tools are available:
+When using mcp Code, these tools are available:
 
 | Tool | Description |
 |------|-------------|
@@ -380,7 +379,7 @@ User: "work on task 123"
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `ADO_ORG` | ✅ | Azure DevOps organization name |
+| `ADO_ORG` | ✅ | Azure DevOps organization slug from `dev.azure.com/{ORG}` |
 | `ADO_PROJECT` | ✅ | Azure DevOps project name |
 | `ADO_PAT` | ✅ | ADO Personal Access Token (or `AZURE_DEVOPS_TOKEN`) |
 | `AZURE_DEVOPS_TOKEN` | ✅ | Alternate name for `ADO_PAT` |

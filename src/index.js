@@ -1,7 +1,7 @@
 /**
  * @module src/index
  *
- * MCP Server bootstrap — entry point for the Claude MCP Automation pipeline.
+ * MCP Server bootstrap — entry point for the MCP Automation pipeline.
  *
  * Responsibilities:
  *   1. Load environment (via config/env.js, which calls dotenv.config() once)
@@ -82,7 +82,7 @@ import {
 // ─────────────────────────────────────────────────────────────────────────────
 
 const server = new Server(
-  { name: "claude-mcp-automation", version: "2.0.0" },
+  { name: "mcp-automation", version: "2.0.0" },
   { capabilities: { tools: {} } }
 );
 
@@ -516,7 +516,7 @@ async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
   process.stderr.write(
-    `Claude MCP Automation v2.0.0 ready (${TOOLS.length} tools)\n`
+    `MCP Automation v2.0.0 ready (${TOOLS.length} tools)\n`
   );
 }
 

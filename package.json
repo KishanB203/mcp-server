@@ -1,12 +1,12 @@
 {
   "name": "mcp-automation",
   "version": "1.0.0",
-  "description": "AI-powered DevOps automation: Azure DevOps + Figma + GitHub + Multi-Agent pipeline via Claude MCP",
+  "description": "AI-powered DevOps automation: Azure DevOps + Figma + GitHub + Multi-Agent pipeline via MCP",
   "type": "module",
   "main": "src/index.js",
   "bin": {
-    "claude-auto": "./cli/index.js",
-    "claude": "./cli/index.js"
+    "mcp-auto": "./cli/index.js",
+    "mcp": "./cli/index.js"
   },
   "scripts": {
     "start": "node src/index.js",
